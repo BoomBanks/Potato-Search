@@ -16,9 +16,14 @@ import ijson
 import requests
 
 # ------------------------- Einstellungen -------------------------
-RARITIES = {"rare", "mythic"}   # nur Rares/Mythics
+RARITIES = {"uncommon", "rare", "mythic"}  # Uncommons, Rares, Mythics (Reserved List: alle Seltenheiten)
 MIN_PRICE_USD = 3.0             # Preis nach Spike mindestens $3
 MIN_CHANGE = 0.20               # mindestens +20 %
+RL_MIN_PRICE_USD = 10.0         # Reserved List: Preis mind. $10
+RL_MIN_CHANGE = 0.10            # Reserved List: Tages-Spike ab +10 % ...
+RL_MIN_ABS_USD = 10.0           # ... oder ab +$10
+RL_WEEK_EXTRA = 0.10            # Reserved List: 7 Tage mind. 10 Prozentpunkte über dem RL-Schnitt
+RL_HOLD = 0.90                  # Spike "bestätigt", wenn der Preis am Folgetag noch mind. 90 % hält
 HISTORY_DAYS = 8                # so viele Tage Preis-Schnappschüsse aufheben
 SPIKELOG_DAYS = 30              # Spike-Verlauf: 30 Tage (keine Lücken, wenn du länger nicht reinschaust)
 CM_FEE = 0.05                   # Cardmarket-Verkaufsgebühr (ca. 5 %)
@@ -134,7 +139,8 @@ def parse(path):
     cards, snap, by_oracle = {}, {}, {}
     if True:
         for c in iter_cards(path):
-            if c.get("lang") != "en" or c.get("rarity") not in RARITIES or c.get("digital"):
+            rl = bool(c.get("reserved"))
+            if c.get("lang") != "en" or c.get("digital") or (c.get("rarity") not in RARITIES and not rl):
                 continue
             p = c.get("prices") or {}
             usd, usdf, eur, eurf = (num(p.get(k)) for k in ("usd", "usd_foil", "eur", "eur_foil"))
@@ -147,7 +153,7 @@ def parse(path):
             oid = c.get("oracle_id") or c["id"]
             cards[c["id"]] = {
                 "n": c.get("name"), "s": c.get("set_name"), "r": c.get("rarity", "?")[0].upper(),
-                "o": oid, "sf": c.get("scryfall_uri"),
+                "o": oid, "sf": c.get("scryfall_uri"), "rl": 1 if rl else 0,
                 "cm": cm_link((c.get("purchase_uris") or {}).get("cardmarket")),
                 "ed": (c.get("related_uris") or {}).get("edhrec"), "img": img,
             }
@@ -165,6 +171,22 @@ def pick_base(hist, today, days_back):
     target = (dt.date.fromisoformat(today) - dt.timedelta(days=days_back)).isoformat()
     best = min(dates, key=lambda d: abs((dt.date.fromisoformat(d) - dt.date.fromisoformat(target)).days))
     return best, hist[best]
+
+
+def is_spike(new, old, rl):
+    if not new or not old:
+        return False
+    if rl:
+        return new >= RL_MIN_PRICE_USD and ((new - old) / old >= RL_MIN_CHANGE or new - old >= RL_MIN_ABS_USD)
+    return new >= MIN_PRICE_USD and (new - old) / old >= MIN_CHANGE
+
+
+def median(vals):
+    vals = sorted(vals)
+    if not vals:
+        return None
+    m = len(vals) // 2
+    return vals[m] if len(vals) % 2 else (vals[m - 1] + vals[m]) / 2
 
 
 def main():
@@ -198,8 +220,11 @@ def main():
         if eur_now and new:
             profit = round(new * fx * CATCHUP * (1 - CM_FEE) - COSTS_EUR - eur_now, 2)
         e = dict(cards[cid])
-        e.update({"id": cid, "f": foil, "old": old, "new": new, "ch": pct(new, old),
+        ch = pct(new, old)
+        e.update({"id": cid, "f": foil, "old": old, "new": new, "ch": ch,
                   "eur": eur_now, "euch": eu, "rk": rank_now, "att": att, "l": light, "p": profit})
+        if e["rl"] and light == "r" and (ch or 0) > 0:
+            e["bo"] = 1  # Preis steigt ohne Aufmerksamkeit und ohne Cardmarket -> möglicher Buyout
         return e
 
     def spikes_vs(base):
@@ -209,13 +234,39 @@ def main():
             if not b:
                 continue
             for foil, i in ((False, 0), (True, 1)):
-                new, old = s[i], b[i]
-                if new and old and new >= MIN_PRICE_USD and (new - old) / old >= MIN_CHANGE:
+                if is_spike(s[i], b[i], cards[cid]["rl"]):
                     out.append(make(cid, foil, base))
         return sorted(out, key=lambda e: -e["ch"])
 
+    # RL-Schnitt: typische Preisänderung aller RL-Karten (ab $10) in ca. 7 Tagen (Median)
+    rl_avg = None
+    if base7:
+        rl_avg = median([(s[0] - base7[cid][0]) / base7[cid][0] for cid, s in snap.items()
+                         if cards[cid]["rl"] and cid in base7 and s[0] and base7[cid][0]
+                         and base7[cid][0] >= RL_MIN_PRICE_USD])
+        rl_avg = round(rl_avg, 3) if rl_avg is not None else None
+
+    def rl_week():
+        out = []
+        if rl_avg is None:
+            return out
+        for cid, s in snap.items():
+            b = base7.get(cid)
+            if not b or not cards[cid]["rl"]:
+                continue
+            for foil, i in ((False, 0), (True, 1)):
+                new, old = s[i], b[i]
+                if new and old and new >= RL_MIN_PRICE_USD and (new - old) / old - rl_avg >= RL_WEEK_EXTRA:
+                    e = make(cid, foil, base7)
+                    e["vs"] = round(e["ch"] - rl_avg, 3)
+                    out.append(e)
+        return out
+
     today_spikes = spikes_vs(base1) if base1 else []
-    week = spikes_vs(base7)[:300] if base7 else []
+    week = []
+    if base7:
+        week = [e for e in spikes_vs(base7) if not e["rl"]][:300] + rl_week()
+        week.sort(key=lambda e: -e["ch"])
 
     # Spike-Verlauf (30 Tage)
     log = load(f"{STORE}/spikelog.json", [])
@@ -224,6 +275,12 @@ def main():
         log.append(dict(e, d=today))
     cutoff = (dt.date.fromisoformat(today) - dt.timedelta(days=SPIKELOG_DAYS)).isoformat()
     log = [e for e in log if e["d"] >= cutoff]
+    # RL-Spikes: hält der Preis am Folgetag? (1 = bestätigt, 0 = nicht gehalten, fehlt = unbestätigt)
+    for e in log:
+        if e.get("rl") and e["d"] < today and "ok" not in e and e["id"] in snap:
+            cur = snap[e["id"]][1 if e["f"] else 0]
+            if cur and e.get("new"):
+                e["ok"] = 1 if cur >= e["new"] * RL_HOLD else 0
     log.sort(key=lambda e: (e["d"], e["ch"] or 0), reverse=True)
 
     # Kandidaten: US steigt, EU hinkt hinterher, Gewinn >= 5 EUR, Ampel nicht rot
@@ -267,7 +324,7 @@ def main():
             continue
         w = base7.get(cid) or empty
         c = cards[cid]
-        prices[cid] = [c["n"], c["s"], s[0], s[1], s[2], s[3], w[0], w[2]]
+        prices[cid] = [c["n"], c["s"], s[0], s[1], s[2], s[3], w[0], w[2], c["rl"]]
 
     hist[today] = snap
     for d in sorted(hist)[:-HISTORY_DAYS]:
@@ -280,7 +337,10 @@ def main():
         "updated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="minutes"),
         "today": today, "base1": d1, "base7": d7, "days": len(hist), "fx": fx,
         "settings": {"min_usd": MIN_PRICE_USD, "min_change": MIN_CHANGE, "fee": CM_FEE,
-                     "costs": COSTS_EUR, "min_profit": MIN_PROFIT_EUR, "catchup": CATCHUP},
+                     "costs": COSTS_EUR, "min_profit": MIN_PROFIT_EUR, "catchup": CATCHUP,
+                     "rl_min_usd": RL_MIN_PRICE_USD, "rl_min_change": RL_MIN_CHANGE,
+                     "rl_min_abs": RL_MIN_ABS_USD, "rl_week_extra": RL_WEEK_EXTRA},
+        "rl_avg": rl_avg,
         "log": log, "week": week, "cand": cand, "hype": hype,
     })
     print(f"Spikes heute: {len(today_spikes)}, 7 Tage: {len(week)}, Kandidaten: {len(cand)}, Hype: {len(hype)}")
