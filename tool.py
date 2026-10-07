@@ -30,7 +30,7 @@ HYPE_MIN_PLACES = 200           # ... und mind. 200 Plätze nach vorne
 HYPE_MAX_RANK = 15000           # nur Karten, die schon halbwegs gespielt werden
 STORE = "store"                 # wird im Branch "daten" aufbewahrt
 SITE = "site"                   # wird als Webseite veröffentlicht
-UA = {"User-Agent": "MTGSpikeTool/2.0", "Accept": "application/json;q=0.9,*/*;q=0.8"}
+UA = {"User-Agent": "MTGSpikeTool/2.0", "Accept": "application/json"}
 # -----------------------------------------------------------------
 
 
@@ -77,9 +77,14 @@ def get_fx():
 
 
 def download_bulk(path="cards.json"):
-    meta = requests.get("https://api.scryfall.com/bulk-data/default-cards", headers=UA, timeout=60)
-    meta.raise_for_status()
-    with requests.get(meta.json()["download_uri"], headers=UA, stream=True, timeout=900) as r:
+    r = requests.get("https://api.scryfall.com/bulk-data", headers=UA, timeout=60)
+    print("Scryfall-Antwort:", r.status_code)
+    r.raise_for_status()
+    entries = r.json().get("data", [])
+    url = next((e["download_uri"] for e in entries if e.get("type") == "default_cards"), None)
+    if not url:
+        raise SystemExit("Scryfall: Kartendatei nicht gefunden. Antwort: " + r.text[:300])
+    with requests.get(url, headers=UA, stream=True, timeout=900) as r:
         r.raise_for_status()
         with open(path, "wb") as f:
             for chunk in r.iter_content(1 << 20):
