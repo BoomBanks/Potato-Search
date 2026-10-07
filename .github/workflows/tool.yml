@@ -1,0 +1,62 @@
+name: MTG Tool Update
+
+on:
+  schedule:
+    - cron: "47 11 * * *"   # täglich ca. 13:47 Uhr (Wien)
+  workflow_dispatch:        # erlaubt "Run workflow" per Knopfdruck
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: mtg-tool
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Pakete installieren
+        run: pip install requests ijson
+
+      - name: Gespeicherte Verlaufsdaten holen
+        run: |
+          mkdir -p store site
+          if git fetch origin daten; then
+            git show origin/daten:history.json.gz > store/history.json.gz || rm -f store/history.json.gz
+            git show origin/daten:spikelog.json > store/spikelog.json || rm -f store/spikelog.json
+          fi
+
+      - name: Daten auswerten
+        run: python tool.py
+
+      - name: Verlaufsdaten sichern
+        run: |
+          cd store
+          git init -q -b daten
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Daten $(date -u +%F)"
+          git push -q --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" daten
+
+      - name: Webseite vorbereiten
+        run: cp index.html site/
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
