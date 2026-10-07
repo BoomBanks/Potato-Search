@@ -112,10 +112,28 @@ def cm_link(url):
     return url + ("&" if "?" in url else "?") + "language=1&minCondition=3"
 
 
+def iter_cards(path):
+    """Liest die Scryfall-Datei: egal ob gepackt (.gz) oder nicht,
+    als große Liste ([...]) oder eine Karte pro Zeile (JSON Lines)."""
+    with open(path, "rb") as raw:
+        gz = raw.read(2) == b"\x1f\x8b"
+    opener = gzip.open if gz else open
+    with opener(path, "rb") as f:
+        first = f.read(64).lstrip()[:1]
+    with opener(path, "rb") as f:
+        if first == b"[":
+            yield from ijson.items(f, "item", use_float=True)
+        else:
+            for line in f:
+                line = line.strip().rstrip(b",")
+                if line and line not in (b"[", b"]"):
+                    yield json.loads(line)
+
+
 def parse(path):
     cards, snap, by_oracle = {}, {}, {}
-    with open(path, "rb") as f:
-        for c in ijson.items(f, "item", use_float=True):
+    if True:
+        for c in iter_cards(path):
             if c.get("lang") != "en" or c.get("rarity") not in RARITIES or c.get("digital"):
                 continue
             p = c.get("prices") or {}
