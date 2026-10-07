@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MTG Spike Tool</title>
+<meta name="theme-color" content="#16171a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<style>
+:root{--bg:#f4f4f6;--card:#fff;--fg:#1b1b1d;--mute:#6d6d73;--line:#e2e2e6;--acc:#2d6ae3;--g:#1e9a52;--y:#d29200;--r:#d24343;--chip:#ececf0}
+@media (prefers-color-scheme:dark){:root{--bg:#121315;--card:#1c1d21;--fg:#ececee;--mute:#9b9ba2;--line:#2d2e33;--acc:#6f9dff;--chip:#2a2b30}}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg);padding-bottom:calc(72px + env(safe-area-inset-bottom))}
+header{padding:16px 16px 4px}
+h1{font-size:19px;margin:0}
+h2{font-size:15px;margin:18px 4px 6px;color:var(--mute);font-weight:600}
+.sub{color:var(--mute);font-size:12px}
+main{padding:0 12px;max-width:760px;margin:0 auto}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom);z-index:5}
+nav button{flex:1;border:0;background:none;color:var(--mute);padding:8px 0 7px;font-size:10.5px;font-family:inherit}
+nav button b{display:block;font-size:19px;font-weight:400;line-height:1.2}
+nav button.on{color:var(--acc)}
+.seg{display:flex;gap:6px;margin:10px 0;flex-wrap:wrap}
+.seg button{border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:20px;padding:6px 12px;font:inherit;font-size:13px}
+.seg button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.item{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;margin:8px 0;display:flex;gap:10px}
+.item img{width:54px;height:75px;border-radius:4px;object-fit:cover;flex:none;background:var(--chip)}
+.body{flex:1;min-width:0}
+.top{display:flex;justify-content:space-between;gap:6px;align-items:flex-start}
+.name{font-weight:600;overflow-wrap:anywhere}
+.star{border:0;background:none;font-size:20px;line-height:1;color:var(--mute);padding:0 2px}
+.star.on{color:#e7a600}
+.meta{color:var(--mute);font-size:12px}
+.row{font-size:13px;margin-top:3px}
+.up{color:var(--g);font-weight:600}.down{color:var(--r);font-weight:600}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px}
+.l-g{background:var(--g)}.l-y{background:var(--y)}.l-r{background:var(--r)}
+.tag{display:inline-block;background:var(--chip);border-radius:6px;padding:0 6px;font-size:11px;margin-left:4px;font-weight:500;color:var(--fg)}
+.new{background:var(--acc);color:#fff}
+.links{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.links a,.links button{font:inherit;font-size:12px;text-decoration:none;color:var(--acc);border:1px solid var(--line);border-radius:8px;padding:3px 8px;background:none}
+.note{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin:8px 0;font-size:13px;color:var(--mute)}
+.empty{text-align:center;color:var(--mute);padding:30px 10px}
+form{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin:8px 0;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+form label{font-size:12px;color:var(--mute);display:flex;flex-direction:column;gap:3px}
+form .full{grid-column:1/-1}
+input{font:inherit;font-size:16px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);width:100%}
+.btn{font:inherit;border:0;border-radius:10px;padding:10px 14px;background:var(--acc);color:#fff;font-weight:600}
+.btn.alt{background:var(--chip);color:var(--fg)}
+.sum{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}
+.sum div{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;text-align:center}
+.sum b{display:block;font-size:17px}
+.sum span{font-size:11px;color:var(--mute)}
+details{font-size:13px;color:var(--mute);margin:6px 4px}
+</style>
+</head>
+<body>
+<header>
+  <h1>MTG Spike Tool</h1>
+  <div class="sub" id="upd">Lade Daten …</div>
+</header>
+<main id="main"></main>
+<nav id="nav">
+  <button data-t="spikes" class="on"><b>📈</b>Spikes</button>
+  <button data-t="hype"><b>📡</b>Hype</button>
+  <button data-t="cand"><b>🎯</b>Kandidaten</button>
+  <button data-t="watch"><b>⭐</b>Watchlist</button>
+  <button data-t="ledger"><b>💶</b>Käufe</button>
+</nav>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const usd = v => v == null ? "–" : "$" + v.toFixed(2);
+const eur = v => v == null ? "–" : v.toFixed(2).replace(".", ",") + " €";
+const pc = v => v == null ? "" : `<span class="${v >= 0 ? "up" : "down"}">${v >= 0 ? "+" : ""}${Math.round(v * 100)} %</span>`;
+const store = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d } catch { return d } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} }
+};
+const LIGHT = {g: "Legitim: Aufmerksamkeit oder Cardmarket ziehen mit", y: "Unklar / früh: noch keine Bestätigung", r: "Fragwürdig: Preis springt ohne Rückhalt (oft Ausreißer)"};
+const HYPELIGHT = {g: "Legitim: US-Preis zieht mit", y: "Früh: Aufmerksamkeit steigt, Preis noch ruhig", r: "Fragwürdig: Preis fällt trotz Aufmerksamkeit"};
+
+let D = null, PRICES = null, tab = "spikes", spikeView = "log";
+let watch = store.get("watch", {});
+let ledger = store.get("ledger", []);
+const lastVisit = store.get("lastVisit", null);
+
+function cmSearch(name) { return "https://www.cardmarket.com/en/Magic/Products/Search?searchString=" + encodeURIComponent(name) + "&language=1&minCondition=3"; }
+function newsLink(name) { return "https://www.google.com/search?tbm=nws&q=" + encodeURIComponent('"' + name + '" mtg'); }
+function redditLink(name) { return "https://www.reddit.com/r/mtgfinance/search/?q=" + encodeURIComponent(name); }
+
+function cardHTML(e, opt = {}) {
+  const lights = opt.hype ? HYPELIGHT : LIGHT;
+  const starOn = watch[e.id] ? " on" : "";
+  let lines = "";
+  if (opt.hype) {
+    lines += `<div class="row">EDHREC-Rang ${e.rk_old} → <b>${e.rk}</b> ${pc(e.att)}</div>`;
+    lines += `<div class="row">US ${usd(e.old)} → ${usd(e.new)} ${pc(e.ch)} · EU ${eur(e.eur)} ${pc(e.euch)}</div>`;
+  } else {
+    lines += `<div class="row">US ${usd(e.old)} → <b>${usd(e.new)}</b> ${pc(e.ch)}</div>`;
+    lines += `<div class="row">Cardmarket ${eur(e.eur)} ${e.euch != null ? "(" + pc(e.euch) + ")" : ""}${e.p != null ? ` · Gewinn-Schätzung <b class="${e.p >= 0 ? "up" : "down"}">${eur(e.p)}</b>` : ""}</div>`;
+  }
+  return `<div class="item">
+    ${e.img ? `<img loading="lazy" src="${esc(e.img)}" alt="">` : ""}
+    <div class="body">
+      <div class="top"><div class="name"><span class="dot l-${e.l}" title="${esc(lights[e.l])}"></span>${esc(e.n)}${e.f ? '<span class="tag">Foil</span>' : ""}${opt.isNew ? '<span class="tag new">neu</span>' : ""}</div>
+      <button class="star${starOn}" data-star="${esc(e.id)}" data-name="${esc(e.n)}" data-set="${esc(e.s)}">★</button></div>
+      <div class="meta">${esc(e.s)} · ${e.r === "M" ? "Mythic" : "Rare"} · ${esc(lights[e.l])}</div>
+      ${lines}
+      <div class="links">
+        <a href="${esc(e.cm || cmSearch(e.n))}" target="_blank" rel="noopener">Cardmarket</a>
+        <a href="${esc(e.sf)}" target="_blank" rel="noopener">Scryfall</a>
+        ${e.ed ? `<a href="${esc(e.ed)}" target="_blank" rel="noopener">EDHREC</a>` : ""}
+        <a href="${newsLink(e.n)}" target="_blank" rel="noopener">Warum? (News)</a>
+        <a href="${redditLink(e.n)}" target="_blank" rel="noopener">Reddit</a>
+        ${opt.buy ? `<button data-buy="${esc(e.n)}" data-price="${e.eur ?? ""}">+ Kaufliste</button>` : ""}
+      </div>
+    </div></div>`;
+}
+
+function list(arr, opt) { return arr.length ? arr.map(e => cardHTML(e, opt)).join("") : `<div class="empty">${opt?.empty || "Nichts gefunden."}</div>`; }
+
+function startHint() {
+  if (!D || D.days >= 2) return "";
+  return `<div class="note">📅 Das Tool sammelt gerade erst Daten. Spikes erscheinen ab dem 2. Tag, die 7-Tage-Ansicht, der Hype-Radar und die Kandidaten werden nach etwa einer Woche richtig aussagekräftig.</div>`;
+}
+
+function renderSpikes() {
+  let h = `<div class="seg">
+    <button data-v="log" class="${spikeView === "log" ? "on" : ""}">Letzte 30 Tage</button>
+    <button data-v="today" class="${spikeView === "today" ? "on" : ""}">Heute</button>
+    <button data-v="week" class="${spikeView === "week" ? "on" : ""}">7 Tage</button></div>` + startHint();
+  if (spikeView === "week") {
+    h += `<div class="note">Preisänderung seit ${esc(D.base7 || "–")} (ca. 7 Tage), mind. +${Math.round(D.settings.min_change * 100)} % und $${D.settings.min_usd}.</div>`;
+    h += list(D.week, {buy: true, empty: "Noch keine 7-Tage-Daten."});
+  } else {
+    const items = spikeView === "today" ? D.log.filter(e => e.d === D.today) : D.log;
+    if (spikeView === "log" && lastVisit) {
+      const n = D.log.filter(e => e.d > lastVisit).length;
+      h += `<div class="note">Seit deinem letzten Besuch (${esc(lastVisit)}): <b>${n}</b> neue Spikes.</div>`;
+    }
+    let cur = null;
+    if (!items.length) h += `<div class="empty">Keine Spikes ${spikeView === "today" ? "heute" : "in den letzten 30 Tagen"}.</div>`;
+    for (const e of items) {
+      if (e.d !== cur) { cur = e.d; h += `<h2>${new Date(cur + "T12:00").toLocaleDateString("de-AT", {weekday: "long", day: "numeric", month: "long"})}</h2>`; }
+      h += cardHTML(e, {buy: true, isNew: lastVisit && e.d > lastVisit});
+    }
+  }
+  return h;
+}
+
+function renderHype() {
+  return startHint() + `<div class="note">Karten, deren Beliebtheit auf EDHREC (Commander) in ca. 7 Tagen deutlich gestiegen ist.<br>
+    <span class="dot l-g"></span>US-Preis zieht mit · <span class="dot l-y"></span>früh, Preis noch ruhig · <span class="dot l-r"></span>Preis fällt trotzdem</div>` +
+    list(D.hype, {hype: true, buy: true, empty: "Noch keine Hype-Signale."});
+}
+
+function renderCand() {
+  const s = D.settings;
+  return startHint() + `<div class="note">Kaufchancen: US-Preis steigt, Cardmarket hinkt hinterher, Ampel nicht rot und geschätzter Gewinn mind. ${eur(s.min_profit)}.
+    <details><summary>Wie wird geschätzt?</summary>Annahme: Cardmarket zieht auf ${Math.round(s.catchup * 100)} % des US-Preises (umgerechnet, 1 $ = ${D.fx.toFixed(3).replace(".", ",")} €) nach. Davon gehen ${Math.round(s.fee * 100)} % Gebühr und ${eur(s.costs)} Nebenkosten ab, minus dein Einkaufspreis. Nur eine Schätzung – Grund des Spikes immer prüfen!</details></div>` +
+    list(D.cand, {buy: true, empty: "Heute keine Kandidaten."});
+}
+
+async function renderWatch() {
+  const ids = Object.keys(watch);
+  if (!ids.length) return `<div class="empty">Noch nichts markiert.<br>Tippe bei einer Karte auf ★, um sie zu beobachten.</div>`;
+  if (!PRICES) { try { PRICES = await (await fetch("prices.json?" + Date.now())).json(); } catch { PRICES = {}; } }
+  return ids.map(id => {
+    const w = watch[id], p = PRICES[id];
+    const now = p ? (p[2] ?? p[3]) : null, wk = p ? p[6] : null;
+    return `<div class="item"><div class="body">
+      <div class="top"><div class="name">${esc(w.n)}</div><button class="star on" data-star="${esc(id)}">★</button></div>
+      <div class="meta">${esc(w.s)} · beobachtet seit ${esc(w.since)}</div>
+      ${p ? `<div class="row">US ${usd(p[2])}${p[3] ? " / Foil " + usd(p[3]) : ""} · 7 Tage ${pc(now && wk ? (now - wk) / wk : null)}</div>
+      <div class="row">Cardmarket ${eur(p[4])}${p[5] ? " / Foil " + eur(p[5]) : ""}</div>
+      <div class="row meta">Beim Markieren: US ${usd(w.usd)}${w.usd && now ? " → jetzt " + pc((now - w.usd) / w.usd) : ""}</div>` : `<div class="row meta">Keine aktuellen Preise.</div>`}
+      <div class="links"><a href="${cmSearch(w.n)}" target="_blank" rel="noopener">Cardmarket</a>
+      <a href="https://scryfall.com/search?q=${encodeURIComponent('!"' + w.n + '"')}" target="_blank" rel="noopener">Scryfall</a>
+      <a href="${newsLink(w.n)}" target="_blank" rel="noopener">News</a></div>
+    </div></div>`;
+  }).join("");
+}
+
+function profitOf(x) {
+  if (x.sell === "" || x.sell == null) return null;
+  return +(x.sell * (1 - (x.fee ?? 5) / 100) - x.buy - (x.costs || 0)).toFixed(2);
+}
+
+function renderLedger(prefill = {}) {
+  let invested = 0, profit = 0, open = 0;
+  for (const x of ledger) { const p = profitOf(x); if (p == null) { open++; invested += x.buy + (x.costs || 0); } else profit += p; }
+  const today = new Date().toISOString().slice(0, 10);
+  let h = `<div class="sum"><div><b class="${profit >= 0 ? "up" : "down"}">${eur(profit)}</b><span>Gewinn (verkauft)</span></div>
+    <div><b>${eur(invested)}</b><span>gebunden</span></div><div><b>${open}</b><span>offen</span></div></div>
+    <form id="lf">
+      <label class="full">Karte<input name="name" required value="${esc(prefill.name || "")}"></label>
+      <label>Kaufdatum<input name="date" type="date" value="${today}"></label>
+      <label>Kaufpreis €<input name="buy" inputmode="decimal" required value="${prefill.price ? String(prefill.price).replace(".", ",") : ""}"></label>
+      <label>Versand/Kosten €<input name="costs" inputmode="decimal" placeholder="0"></label>
+      <label>Gebühr %<input name="fee" inputmode="decimal" value="5"></label>
+      <label class="full">Verkaufspreis € (leer = noch nicht verkauft)<input name="sell" inputmode="decimal"></label>
+      <button class="btn full" type="submit">Eintragen</button>
+    </form>`;
+  if (!ledger.length) h += `<div class="empty">Noch keine Einträge.</div>`;
+  ledger.forEach((x, i) => {
+    const p = profitOf(x);
+    h += `<div class="item"><div class="body">
+      <div class="top"><div class="name">${esc(x.name)}</div><span class="meta">${esc(x.date)}</span></div>
+      <div class="row">Kauf ${eur(x.buy)}${x.costs ? " + " + eur(x.costs) : ""} · ${p == null ? "<b>noch offen</b>" : "Verkauf " + eur(x.sell) + " (−" + x.fee + " %)"}</div>
+      ${p != null ? `<div class="row">Gewinn <b class="${p >= 0 ? "up" : "down"}">${eur(p)}</b>${p >= 0 && p < 5 ? ' <span class="meta">(unter 5 € Ziel)</span>' : ""}</div>` : ""}
+      <div class="links">${p == null ? `<button data-sell="${i}">Verkauft eintragen</button>` : ""}<button data-del="${i}">Löschen</button></div>
+    </div></div>`;
+  });
+  h += `<div class="note">Die Liste wird nur auf diesem Gerät gespeichert. Mach ab und zu eine Sicherung:</div>
+    <div class="seg"><button id="exp">💾 Sicherung speichern</button><button id="imp">📂 Sicherung laden</button></div>
+    <input type="file" id="impf" accept="application/json" hidden>`;
+  return h;
+}
+
+const num = v => { const n = parseFloat(String(v ?? "").replace(",", ".")); return isNaN(n) ? null : n; };
+
+async function render(prefill) {
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.t === tab));
+  if (!D && tab !== "ledger" && tab !== "watch") { $("#main").innerHTML = `<div class="empty">Daten werden geladen …</div>`; return; }
+  const m = $("#main");
+  if (tab === "spikes") m.innerHTML = renderSpikes();
+  else if (tab === "hype") m.innerHTML = renderHype();
+  else if (tab === "cand") m.innerHTML = renderCand();
+  else if (tab === "watch") { m.innerHTML = `<div class="empty">Lade …</div>`; m.innerHTML = await renderWatch(); }
+  else m.innerHTML = renderLedger(prefill);
+  window.scrollTo(0, 0);
+}
+
+document.addEventListener("click", ev => {
+  const t = ev.target.closest("button");
+  if (!t) return;
+  if (t.dataset.t) { tab = t.dataset.t; render(); return; }
+  if (t.dataset.v) { spikeView = t.dataset.v; render(); return; }
+  if (t.dataset.star) {
+    const id = t.dataset.star;
+    if (watch[id]) { delete watch[id]; t.classList.remove("on"); if (tab === "watch") render(); }
+    else {
+      const all = [...(D?.log || []), ...(D?.week || []), ...(D?.hype || []), ...(D?.cand || [])];
+      const e = all.find(x => x.id === id);
+      watch[id] = {n: t.dataset.name, s: t.dataset.set, usd: e ? e.new : null, since: new Date().toISOString().slice(0, 10)};
+      t.classList.add("on");
+    }
+    store.set("watch", watch); return;
+  }
+  if (t.dataset.buy !== undefined) { tab = "ledger"; render({name: t.dataset.buy, price: t.dataset.price}); return; }
+  if (t.dataset.del !== undefined) { if (confirm("Eintrag löschen?")) { ledger.splice(+t.dataset.del, 1); store.set("ledger", ledger); render(); } return; }
+  if (t.dataset.sell !== undefined) {
+    const v = num(prompt("Verkaufspreis in €:")); if (v == null) return;
+    ledger[+t.dataset.sell].sell = v; store.set("ledger", ledger); render(); return;
+  }
+  if (t.id === "exp") {
+    const blob = new Blob([JSON.stringify({ledger, watch}, null, 1)], {type: "application/json"});
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = "mtg-sicherung-" + new Date().toISOString().slice(0, 10) + ".json"; a.click(); return;
+  }
+  if (t.id === "imp") { $("#impf").click(); return; }
+});
+
+document.addEventListener("change", async ev => {
+  if (ev.target.id !== "impf" || !ev.target.files[0]) return;
+  try {
+    const j = JSON.parse(await ev.target.files[0].text());
+    if (!confirm("Sicherung laden? Aktuelle Liste und Watchlist werden ersetzt.")) return;
+    ledger = j.ledger || []; watch = j.watch || {};
+    store.set("ledger", ledger); store.set("watch", watch); render();
+  } catch { alert("Datei konnte nicht gelesen werden."); }
+});
+
+document.addEventListener("submit", ev => {
+  if (ev.target.id !== "lf") return;
+  ev.preventDefault();
+  const f = new FormData(ev.target), buy = num(f.get("buy"));
+  if (buy == null) { alert("Bitte Kaufpreis angeben."); return; }
+  ledger.unshift({name: f.get("name").trim(), date: f.get("date"), buy, costs: num(f.get("costs")) || 0,
+    fee: num(f.get("fee")) ?? 5, sell: num(f.get("sell"))});
+  store.set("ledger", ledger); render();
+});
+
+(async () => {
+  render();
+  try {
+    D = await (await fetch("data.json?" + Date.now())).json();
+    const upd = new Date(D.updated);
+    $("#upd").textContent = "Stand: " + upd.toLocaleString("de-AT", {dateStyle: "medium", timeStyle: "short"}) + " · 1 $ = " + D.fx.toFixed(3).replace(".", ",") + " €";
+    render();
+    store.set("lastVisit", D.today);
+  } catch {
+    $("#upd").textContent = "Daten konnten nicht geladen werden – läuft das tägliche Update schon?";
+    render();
+  }
+})();
+</script>
+</body>
+</html>
