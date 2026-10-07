@@ -81,9 +81,22 @@ def download_bulk(path="cards.json"):
     print("Scryfall-Antwort:", r.status_code)
     r.raise_for_status()
     entries = r.json().get("data", [])
-    url = next((e["download_uri"] for e in entries if e.get("type") == "default_cards"), None)
+    entry = next((e for e in entries if e.get("type") == "default_cards"), None)
+    if entry is None:
+        raise SystemExit("Scryfall: Eintrag default_cards fehlt. Typen: " + str([e.get("type") for e in entries]))
+
+    def find_url(obj):
+        for k, v in obj.items():
+            if "download" in k and isinstance(v, str) and v.startswith("http"):
+                return v
+        return None
+
+    url = find_url(entry)
+    if not url and entry.get("uri"):  # Detailseite des Eintrags nachladen
+        url = find_url(requests.get(entry["uri"], headers=UA, timeout=60).json())
     if not url:
-        raise SystemExit("Scryfall: Kartendatei nicht gefunden. Antwort: " + r.text[:300])
+        raise SystemExit("Scryfall: Download-Link nicht gefunden. Eintrag: " + json.dumps(entry)[:800])
+    print("Lade Kartendatei:", url)
     with requests.get(url, headers=UA, stream=True, timeout=900) as r:
         r.raise_for_status()
         with open(path, "wb") as f:
