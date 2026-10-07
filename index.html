@@ -37,6 +37,12 @@ nav button.on{color:var(--acc)}
 .l-g{background:var(--g)}.l-y{background:var(--y)}.l-r{background:var(--r)}
 .tag{display:inline-block;background:var(--chip);border-radius:6px;padding:0 6px;font-size:11px;margin-left:4px;font-weight:500;color:var(--fg)}
 .new{background:var(--acc);color:#fff}
+.rl{background:#7a4fd6;color:#fff;font-weight:700}
+.warn{background:var(--r);color:#fff}
+.okt{background:var(--g);color:#fff}
+.seg.f{margin:4px 0}
+.seg.f button{padding:4px 10px;font-size:12px}
+.seg.f span{font-size:12px;color:var(--mute);align-self:center;margin-right:2px}
 .links{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .links a,.links button{font:inherit;font-size:12px;text-decoration:none;color:var(--acc);border:1px solid var(--line);border-radius:8px;padding:3px 8px;background:none}
 .note{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin:8px 0;font-size:13px;color:var(--mute)}
@@ -81,6 +87,16 @@ const LIGHT = {g: "Legitim: Aufmerksamkeit oder Cardmarket ziehen mit", y: "Unkl
 const HYPELIGHT = {g: "Legitim: US-Preis zieht mit", y: "Früh: Aufmerksamkeit steigt, Preis noch ruhig", r: "Fragwürdig: Preis fällt trotz Aufmerksamkeit"};
 
 let D = null, PRICES = null, tab = "spikes", spikeView = "log";
+let rlF = store.get("rlF", "all"), rarF = store.get("rarF", "all");
+const RAR = {C: "Common", U: "Uncommon", R: "Rare", M: "Mythic"};
+function filt(arr) {
+  return arr.filter(e => (rlF === "all" || (rlF === "only" ? e.rl : !e.rl)) && (rarF === "all" || e.r === rarF));
+}
+function filterBar() {
+  const b = (k, v, cur, label) => `<button data-${k}="${v}" class="${cur === v ? "on" : ""}">${label}</button>`;
+  return `<div class="seg f"><span>Reserved List:</span>${b("rlf", "all", rlF, "Alle")}${b("rlf", "only", rlF, "Nur RL")}${b("rlf", "hide", rlF, "RL ausblenden")}</div>
+    <div class="seg f"><span>Seltenheit:</span>${b("rarf", "all", rarF, "Alle")}${b("rarf", "U", rarF, "Uncommon")}${b("rarf", "R", rarF, "Rare")}${b("rarf", "M", rarF, "Mythic")}</div>`;
+}
 let watch = store.get("watch", {});
 let ledger = store.get("ledger", []);
 const lastVisit = store.get("lastVisit", null);
@@ -97,15 +113,15 @@ function cardHTML(e, opt = {}) {
     lines += `<div class="row">EDHREC-Rang ${e.rk_old} → <b>${e.rk}</b> ${pc(e.att)}</div>`;
     lines += `<div class="row">US ${usd(e.old)} → ${usd(e.new)} ${pc(e.ch)} · EU ${eur(e.eur)} ${pc(e.euch)}</div>`;
   } else {
-    lines += `<div class="row">US ${usd(e.old)} → <b>${usd(e.new)}</b> ${pc(e.ch)}</div>`;
+    lines += `<div class="row">US ${usd(e.old)} → <b>${usd(e.new)}</b> ${pc(e.ch)}${e.vs != null ? ` <span class="meta">(${Math.round(e.vs * 100)} Pp. über RL-Schnitt)</span>` : ""}</div>`;
     lines += `<div class="row">Cardmarket ${eur(e.eur)} ${e.euch != null ? "(" + pc(e.euch) + ")" : ""}${e.p != null ? ` · Gewinn-Schätzung <b class="${e.p >= 0 ? "up" : "down"}">${eur(e.p)}</b>` : ""}</div>`;
   }
   return `<div class="item">
     ${e.img ? `<img loading="lazy" src="${esc(e.img)}" alt="">` : ""}
     <div class="body">
-      <div class="top"><div class="name"><span class="dot l-${e.l}" title="${esc(lights[e.l])}"></span>${esc(e.n)}${e.f ? '<span class="tag">Foil</span>' : ""}${opt.isNew ? '<span class="tag new">neu</span>' : ""}</div>
+      <div class="top"><div class="name"><span class="dot l-${e.l}" title="${esc(lights[e.l])}"></span>${esc(e.n)}${e.rl ? '<span class="tag rl">RL</span>' : ""}${e.f ? '<span class="tag">Foil</span>' : ""}${opt.isNew ? '<span class="tag new">neu</span>' : ""}${e.bo ? '<span class="tag warn">möglicher Buyout</span>' : ""}${opt.conf && e.rl ? (e.ok === 1 ? '<span class="tag okt">bestätigt</span>' : e.ok === 0 ? '<span class="tag warn">nicht gehalten</span>' : '<span class="tag">unbestätigt</span>') : ""}</div>
       <button class="star${starOn}" data-star="${esc(e.id)}" data-name="${esc(e.n)}" data-set="${esc(e.s)}">★</button></div>
-      <div class="meta">${esc(e.s)} · ${e.r === "M" ? "Mythic" : "Rare"} · ${esc(lights[e.l])}</div>
+      <div class="meta">${esc(e.s)} · ${RAR[e.r] || "Sonder"} · ${esc(e.bo ? "Möglicher Buyout: Preis steigt, aber weder Aufmerksamkeit noch Cardmarket ziehen mit" : lights[e.l])}</div>
       ${lines}
       <div class="links">
         <a href="${esc(e.cm || cmSearch(e.n))}" target="_blank" rel="noopener">Cardmarket</a>
@@ -129,12 +145,14 @@ function renderSpikes() {
   let h = `<div class="seg">
     <button data-v="log" class="${spikeView === "log" ? "on" : ""}">Letzte 30 Tage</button>
     <button data-v="today" class="${spikeView === "today" ? "on" : ""}">Heute</button>
-    <button data-v="week" class="${spikeView === "week" ? "on" : ""}">7 Tage</button></div>` + startHint();
+    <button data-v="week" class="${spikeView === "week" ? "on" : ""}">7 Tage</button></div>` + filterBar() + startHint();
+  const st = D.settings;
   if (spikeView === "week") {
-    h += `<div class="note">Preisänderung seit ${esc(D.base7 || "–")} (ca. 7 Tage), mind. +${Math.round(D.settings.min_change * 100)} % und $${D.settings.min_usd}.</div>`;
-    h += list(D.week, {buy: true, empty: "Noch keine 7-Tage-Daten."});
+    h += `<div class="note">Preisänderung seit ${esc(D.base7 || "–")} (ca. 7 Tage), mind. +${Math.round(st.min_change * 100)} % und $${st.min_usd}.${st.rl_week_extra != null ? `<br><b>RL-Karten:</b> ab $${st.rl_min_usd} und mind. ${Math.round(st.rl_week_extra * 100)} Prozentpunkte stärker als der RL-Schnitt${D.rl_avg != null ? ` (aktuell ${pc(D.rl_avg)})` : " (wird nach ca. 7 Tagen berechnet)"}.` : ""}</div>`;
+    h += list(filt(D.week), {buy: true, empty: "Noch keine 7-Tage-Daten."});
   } else {
-    const items = spikeView === "today" ? D.log.filter(e => e.d === D.today) : D.log;
+    if (st.rl_min_usd != null) h += `<details><summary>Regeln für Spikes</summary>Normal: ab $${st.min_usd} und mind. +${Math.round(st.min_change * 100)} % an einem Tag.<br>Reserved List: ab $${st.rl_min_usd} und mind. +${Math.round(st.rl_min_change * 100)} % oder +$${st.rl_min_abs} an einem Tag. „Bestätigt“, wenn der Preis am Folgetag noch hält.</details>`;
+    const items = filt(spikeView === "today" ? D.log.filter(e => e.d === D.today) : D.log);
     if (spikeView === "log" && lastVisit) {
       const n = D.log.filter(e => e.d > lastVisit).length;
       h += `<div class="note">Seit deinem letzten Besuch (${esc(lastVisit)}): <b>${n}</b> neue Spikes.</div>`;
@@ -143,23 +161,23 @@ function renderSpikes() {
     if (!items.length) h += `<div class="empty">Keine Spikes ${spikeView === "today" ? "heute" : "in den letzten 30 Tagen"}.</div>`;
     for (const e of items) {
       if (e.d !== cur) { cur = e.d; h += `<h2>${new Date(cur + "T12:00").toLocaleDateString("de-AT", {weekday: "long", day: "numeric", month: "long"})}</h2>`; }
-      h += cardHTML(e, {buy: true, isNew: lastVisit && e.d > lastVisit});
+      h += cardHTML(e, {buy: true, conf: true, isNew: lastVisit && e.d > lastVisit});
     }
   }
   return h;
 }
 
 function renderHype() {
-  return startHint() + `<div class="note">Karten, deren Beliebtheit auf EDHREC (Commander) in ca. 7 Tagen deutlich gestiegen ist.<br>
+  return filterBar() + startHint() + `<div class="note">Karten, deren Beliebtheit auf EDHREC (Commander) in ca. 7 Tagen deutlich gestiegen ist.<br>
     <span class="dot l-g"></span>US-Preis zieht mit · <span class="dot l-y"></span>früh, Preis noch ruhig · <span class="dot l-r"></span>Preis fällt trotzdem</div>` +
-    list(D.hype, {hype: true, buy: true, empty: "Noch keine Hype-Signale."});
+    list(filt(D.hype), {hype: true, buy: true, empty: "Noch keine Hype-Signale."});
 }
 
 function renderCand() {
   const s = D.settings;
-  return startHint() + `<div class="note">Kaufchancen: US-Preis steigt, Cardmarket hinkt hinterher, Ampel nicht rot und geschätzter Gewinn mind. ${eur(s.min_profit)}.
+  return filterBar() + startHint() + `<div class="note">Kaufchancen: US-Preis steigt, Cardmarket hinkt hinterher, Ampel nicht rot und geschätzter Gewinn mind. ${eur(s.min_profit)}.
     <details><summary>Wie wird geschätzt?</summary>Annahme: Cardmarket zieht auf ${Math.round(s.catchup * 100)} % des US-Preises (umgerechnet, 1 $ = ${D.fx.toFixed(3).replace(".", ",")} €) nach. Davon gehen ${Math.round(s.fee * 100)} % Gebühr und ${eur(s.costs)} Nebenkosten ab, minus dein Einkaufspreis. Nur eine Schätzung – Grund des Spikes immer prüfen!</details></div>` +
-    list(D.cand, {buy: true, empty: "Heute keine Kandidaten."});
+    list(filt(D.cand), {buy: true, empty: "Heute keine Kandidaten."});
 }
 
 async function renderWatch() {
@@ -170,7 +188,7 @@ async function renderWatch() {
     const w = watch[id], p = PRICES[id];
     const now = p ? (p[2] ?? p[3]) : null, wk = p ? p[6] : null;
     return `<div class="item"><div class="body">
-      <div class="top"><div class="name">${esc(w.n)}</div><button class="star on" data-star="${esc(id)}">★</button></div>
+      <div class="top"><div class="name">${esc(w.n)}${p && p[8] ? '<span class="tag rl">RL</span>' : ""}</div><button class="star on" data-star="${esc(id)}">★</button></div>
       <div class="meta">${esc(w.s)} · beobachtet seit ${esc(w.since)}</div>
       ${p ? `<div class="row">US ${usd(p[2])}${p[3] ? " / Foil " + usd(p[3]) : ""} · 7 Tage ${pc(now && wk ? (now - wk) / wk : null)}</div>
       <div class="row">Cardmarket ${eur(p[4])}${p[5] ? " / Foil " + eur(p[5]) : ""}</div>
@@ -237,6 +255,8 @@ document.addEventListener("click", ev => {
   if (!t) return;
   if (t.dataset.t) { tab = t.dataset.t; render(); return; }
   if (t.dataset.v) { spikeView = t.dataset.v; render(); return; }
+  if (t.dataset.rlf) { rlF = t.dataset.rlf; store.set("rlF", rlF); render(); return; }
+  if (t.dataset.rarf) { rarF = t.dataset.rarf; store.set("rarF", rarF); render(); return; }
   if (t.dataset.star) {
     const id = t.dataset.star;
     if (watch[id]) { delete watch[id]; t.classList.remove("on"); if (tab === "watch") render(); }
