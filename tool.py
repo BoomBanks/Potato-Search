@@ -11,6 +11,8 @@ import datetime as dt
 import gzip
 import json
 import os
+import re
+import xml.etree.ElementTree as ET
 
 import ijson
 import requests
@@ -36,6 +38,21 @@ HYPE_MAX_RANK = 15000           # nur Karten, die schon halbwegs gespielt werden
 STORE = "store"                 # wird im Branch "daten" aufbewahrt
 SITE = "site"                   # wird als Webseite veröffentlicht
 UA = {"User-Agent": "MTGSpikeTool/2.0", "Accept": "application/json"}
+
+# YouTube: neueste Videos dieser Kanäle werden täglich nach Kartennamen durchsucht.
+# Eintragen als @Handle (wie in der YouTube-Adresse) oder als Kanal-ID (beginnt mit UC).
+YT_CHANNELS = [
+    "@MTGGoldfish",
+    "@TolarianCommunityCollege",
+    "@AlphaInvestments",
+    "@commandcast",
+    "@EDHRECast",
+    "@TCGplayer",
+    "@CardKingdom",
+    "@MTGSalvation",
+]
+YT_DAYS = 7                     # Erwähnungen der letzten 7 Tage zählen
+YT_DESC_CHARS = 400             # nur den Anfang der Videobeschreibung durchsuchen (weniger Fehltreffer)
 # -----------------------------------------------------------------
 
 
@@ -161,6 +178,103 @@ def parse(path):
     return cards, snap, by_oracle
 
 
+# ------------------------- YouTube -------------------------
+YT_NS = {"a": "http://www.w3.org/2005/Atom", "yt": "http://www.youtube.com/xml/schemas/2015",
+         "m": "http://search.yahoo.com/mrss/"}
+YT_HDR = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+          "Accept-Language": "en-US,en;q=0.8", "Cookie": "CONSENT=YES+1; SOCS=CAI"}
+
+
+def yt_resolve(handle, cache):
+    """@Handle -> Kanal-ID (UC...). Ergebnis wird gespeichert, damit es nur einmal nachgeschaut wird."""
+    if handle.startswith("UC"):
+        return handle
+    if cache.get(handle):
+        return cache[handle]
+    try:
+        html = requests.get("https://www.youtube.com/" + handle, headers=YT_HDR, timeout=30).text
+    except Exception:
+        return None
+    for pat in (r"feeds/videos\.xml\?channel_id=(UC[\w-]{22})", r'"externalId":"(UC[\w-]{22})"',
+                r'itemprop="identifier" content="(UC[\w-]{22})"', r'"channelId":"(UC[\w-]{22})"'):
+        m = re.search(pat, html)
+        if m:
+            cache[handle] = m.group(1)
+            return m.group(1)
+    return None
+
+
+def yt_videos(channel_id):
+    r = requests.get("https://www.youtube.com/feeds/videos.xml?channel_id=" + channel_id,
+                     headers=YT_HDR, timeout=30)
+    r.raise_for_status()
+    root = ET.fromstring(r.content)
+    ch = root.findtext("a:title", "", YT_NS)
+    out = []
+    for e in root.findall("a:entry", YT_NS):
+        vid = e.findtext("yt:videoId", "", YT_NS)
+        desc = e.findtext("m:group/m:description", "", YT_NS) or ""
+        out.append({"v": vid, "t": e.findtext("a:title", "", YT_NS), "ch": ch,
+                    "d": (e.findtext("a:published", "", YT_NS) or "")[:10],
+                    "txt": desc[:YT_DESC_CHARS]})
+    return out
+
+
+def name_index(names):
+    """Kartennamen nach erstem Wort sortiert, damit die Suche im Text schnell geht."""
+    idx = {}
+    for n in names:
+        n = n.split(" // ")[0].strip()
+        if not n or not n[0].isupper():
+            continue
+        if " " not in n and len(n) < 8:   # kurze Einwort-Namen (z. B. "Opt") ergeben zu viele Fehltreffer
+            continue
+        idx.setdefault(n.split(" ")[0].rstrip(",:"), set()).add(n)
+    return {k: sorted(v, key=len, reverse=True) for k, v in idx.items()}
+
+
+def find_names(text, idx):
+    found = set()
+    text = text.replace("\u2019", "'")  # typografisches Apostroph vereinheitlichen
+    for m in re.finditer(r"[A-Z][\w'\-]*", text):
+        for n in idx.get(m.group(0).rstrip(",:"), ()):
+            end = m.start() + len(n)
+            if text.startswith(n, m.start()) and (end == len(text) or not text[end].isalnum()):
+                found.add(n)
+                break
+    return found
+
+
+def youtube(names, today):
+    """Sammelt Videos der Kanäle und zählt, in wie vielen Videos (7 Tage) eine Karte erwähnt wird."""
+    store = load(f"{STORE}/yt.json", {})
+    cache, videos = store.get("ids", {}), store.get("videos", {})
+    ok, bad = [], []
+    for h in YT_CHANNELS:
+        cid = yt_resolve(h, cache)
+        if not cid:
+            bad.append(h)
+            continue
+        try:
+            for v in yt_videos(cid):
+                if v["v"]:
+                    videos[v["v"]] = v
+            ok.append(h)
+        except Exception:
+            bad.append(h)
+    cutoff = (dt.date.fromisoformat(today) - dt.timedelta(days=YT_DAYS)).isoformat()
+    videos = {k: v for k, v in videos.items() if v.get("d", "") >= cutoff}
+    idx = name_index(names)
+    hits = {}
+    for v in sorted(videos.values(), key=lambda v: v["d"], reverse=True):
+        for n in find_names(v["t"] + "\n" + v.get("txt", ""), idx):
+            hits.setdefault(n, []).append({"t": v["t"], "u": "https://www.youtube.com/watch?v=" + v["v"],
+                                           "ch": v["ch"], "d": v["d"]})
+    save(f"{STORE}/yt.json", {"ids": cache, "videos": videos})
+    print(f"YouTube: {len(ok)} Kanäle ok, nicht erreichbar: {bad or '-'}; {len(videos)} Videos, {len(hits)} Karten erwähnt")
+    return hits, {"ok": ok, "bad": bad, "videos": len(videos)}
+
+
 def pick_base(hist, today, days_back):
     """Schnappschuss, der am nächsten an 'vor X Tagen' liegt (aber vor heute)."""
     dates = sorted(d for d in hist if d < today)
@@ -202,6 +316,16 @@ def main():
     d7, base7 = pick_base(hist, today, 7)
     empty = [None] * 5
 
+    # YouTube-Erwähnungen (ein Fehler hier darf das restliche Tool nie stoppen)
+    try:
+        yt, yt_info = youtube({c["n"] for c in cards.values()}, today)
+    except Exception as ex:
+        print("YouTube übersprungen:", ex)
+        yt, yt_info = {}, {"ok": [], "bad": YT_CHANNELS, "videos": 0}
+
+    def front(n):
+        return (n or "").split(" // ")[0].strip()
+
     def make(cid, foil, base):
         s, b, w = snap[cid], base.get(cid) or empty, base7.get(cid) or empty
         ui, ei = (1, 3) if foil else (0, 2)
@@ -210,7 +334,10 @@ def main():
         rank_now, rank_old = s[4], w[4]
         att = pct(rank_old, rank_now) if rank_now and rank_old else None  # >0 = Aufmerksamkeit steigt
         eu = pct(eur_now, eur_old)
-        if att is None and eu is None:
+        ytn = len(yt.get(front(cards[cid]["n"]), []))
+        if ytn:
+            light = "g"   # auf YouTube erwähnt = echte Aufmerksamkeit
+        elif att is None and eu is None:
             light = "y"
         elif (att or 0) >= 0.10 or (eu or 0) >= 0.10:
             light = "g"
@@ -223,6 +350,8 @@ def main():
         ch = pct(new, old)
         e.update({"id": cid, "f": foil, "old": old, "new": new, "ch": ch,
                   "eur": eur_now, "euch": eu, "rk": rank_now, "att": att, "l": light, "p": profit})
+        if ytn:
+            e["yt"] = ytn
         if e["rl"] and light == "r" and (ch or 0) > 0:
             e["bo"] = 1  # Preis steigt ohne Aufmerksamkeit und ohne Cardmarket -> möglicher Buyout
         return e
@@ -317,6 +446,23 @@ def main():
         hype.sort(key=lambda e: -e["att"])
         hype = hype[:150]
 
+    # YouTube-Liste: Karten, die in den letzten Tagen in Videos vorkamen
+    by_name = {}
+    for oid, ids in by_oracle.items():
+        by_name.setdefault(front(cards[ids[0]]["n"]), []).extend(ids)
+    ytl = []
+    for n, vids in yt.items():
+        ids = by_name.get(n)
+        if not ids:
+            continue
+        with_eur = [i for i in ids if snap[i][2]]
+        rep = min(with_eur, key=lambda i: snap[i][2]) if with_eur else ids[0]
+        e = make(rep, False, base7)
+        e["ytv"] = vids[:5]
+        ytl.append(e)
+    ytl.sort(key=lambda e: (-e["yt"], -(e["ch"] or 0)))
+    ytl = ytl[:150]
+
     # Preise für Watchlist
     prices = {}
     for cid, s in snap.items():
@@ -341,9 +487,10 @@ def main():
                      "rl_min_usd": RL_MIN_PRICE_USD, "rl_min_change": RL_MIN_CHANGE,
                      "rl_min_abs": RL_MIN_ABS_USD, "rl_week_extra": RL_WEEK_EXTRA},
         "rl_avg": rl_avg,
-        "log": log, "week": week, "cand": cand, "hype": hype,
+        "log": log, "week": week, "cand": cand, "hype": hype, "ytl": ytl, "yt_info": yt_info,
     })
-    print(f"Spikes heute: {len(today_spikes)}, 7 Tage: {len(week)}, Kandidaten: {len(cand)}, Hype: {len(hype)}")
+    print(f"Spikes heute: {len(today_spikes)}, 7 Tage: {len(week)}, Kandidaten: {len(cand)}, "
+          f"Hype: {len(hype)}, YouTube: {len(ytl)}")
 
 
 if __name__ == "__main__":
