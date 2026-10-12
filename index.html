@@ -1,497 +1,337 @@
-#!/usr/bin/env python3
-"""
-MTG Spike Tool – alles in einem:
-  * Spikes (heute + Verlauf 30 Tage + 7-Tage-Ansicht)
-  * Hype-Radar (steigende Aufmerksamkeit laut EDHREC-Rang, Ampel im Abgleich zum US-Preis)
-  * Kandidaten (US-Preis steigt, Cardmarket hinkt hinterher, geschätzter Gewinn >= 5 EUR)
-  * Daten für Watchlist (prices.json)
-Läuft 1x täglich über GitHub Actions. Datenquelle: Scryfall (USD = TCGplayer, EUR = Cardmarket).
-"""
-import datetime as dt
-import gzip
-import json
-import os
-import re
-import xml.etree.ElementTree as ET
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MTG Spike Tool</title>
+<meta name="theme-color" content="#16171a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<style>
+:root{--bg:#f4f4f6;--card:#fff;--fg:#1b1b1d;--mute:#6d6d73;--line:#e2e2e6;--acc:#2d6ae3;--g:#1e9a52;--y:#d29200;--r:#d24343;--chip:#ececf0}
+@media (prefers-color-scheme:dark){:root{--bg:#121315;--card:#1c1d21;--fg:#ececee;--mute:#9b9ba2;--line:#2d2e33;--acc:#6f9dff;--chip:#2a2b30}}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg);padding-bottom:calc(72px + env(safe-area-inset-bottom))}
+header{padding:16px 16px 4px}
+h1{font-size:19px;margin:0}
+h2{font-size:15px;margin:18px 4px 6px;color:var(--mute);font-weight:600}
+.sub{color:var(--mute);font-size:12px}
+main{padding:0 12px;max-width:760px;margin:0 auto}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom);z-index:5}
+nav button{flex:1;border:0;background:none;color:var(--mute);padding:8px 0 7px;font-size:10.5px;font-family:inherit}
+nav button b{display:block;font-size:19px;font-weight:400;line-height:1.2}
+nav button.on{color:var(--acc)}
+.seg{display:flex;gap:6px;margin:10px 0;flex-wrap:wrap}
+.seg button{border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:20px;padding:6px 12px;font:inherit;font-size:13px}
+.seg button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.item{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;margin:8px 0;display:flex;gap:10px}
+.item img{width:54px;height:75px;border-radius:4px;object-fit:cover;flex:none;background:var(--chip)}
+.body{flex:1;min-width:0}
+.top{display:flex;justify-content:space-between;gap:6px;align-items:flex-start}
+.name{font-weight:600;overflow-wrap:anywhere}
+.star{border:0;background:none;font-size:20px;line-height:1;color:var(--mute);padding:0 2px}
+.star.on{color:#e7a600}
+.meta{color:var(--mute);font-size:12px}
+.row{font-size:13px;margin-top:3px}
+.up{color:var(--g);font-weight:600}.down{color:var(--r);font-weight:600}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px}
+.l-g{background:var(--g)}.l-y{background:var(--y)}.l-r{background:var(--r)}
+.tag{display:inline-block;background:var(--chip);border-radius:6px;padding:0 6px;font-size:11px;margin-left:4px;font-weight:500;color:var(--fg)}
+.new{background:var(--acc);color:#fff}
+.rl{background:#7a4fd6;color:#fff;font-weight:700}
+.warn{background:var(--r);color:#fff}
+.okt{background:var(--g);color:#fff}
+.ytt{background:#e02c2c;color:#fff}
+.vids{margin-top:5px;font-size:12px}
+.vids a{display:block;color:var(--acc);text-decoration:none;padding:2px 0;overflow-wrap:anywhere}
+.vids span{color:var(--mute)}
+.seg.f{margin:4px 0}
+.seg.f button{padding:4px 10px;font-size:12px}
+.seg.f span{font-size:12px;color:var(--mute);align-self:center;margin-right:2px}
+.links{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.links a,.links button{font:inherit;font-size:12px;text-decoration:none;color:var(--acc);border:1px solid var(--line);border-radius:8px;padding:3px 8px;background:none}
+.note{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin:8px 0;font-size:13px;color:var(--mute)}
+.empty{text-align:center;color:var(--mute);padding:30px 10px}
+form{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin:8px 0;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+form label{font-size:12px;color:var(--mute);display:flex;flex-direction:column;gap:3px}
+form .full{grid-column:1/-1}
+input{font:inherit;font-size:16px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);width:100%}
+.btn{font:inherit;border:0;border-radius:10px;padding:10px 14px;background:var(--acc);color:#fff;font-weight:600}
+.btn.alt{background:var(--chip);color:var(--fg)}
+.sum{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}
+.sum div{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;text-align:center}
+.sum b{display:block;font-size:17px}
+.sum span{font-size:11px;color:var(--mute)}
+details{font-size:13px;color:var(--mute);margin:6px 4px}
+</style>
+</head>
+<body>
+<header>
+  <h1>MTG Spike Tool</h1>
+  <div class="sub" id="upd">Lade Daten …</div>
+</header>
+<main id="main"></main>
+<nav id="nav">
+  <button data-t="spikes" class="on"><b>📈</b>Spikes</button>
+  <button data-t="hype"><b>📡</b>Hype</button>
+  <button data-t="cand"><b>🎯</b>Kandidaten</button>
+  <button data-t="watch"><b>⭐</b>Watchlist</button>
+  <button data-t="ledger"><b>💶</b>Käufe</button>
+</nav>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const usd = v => v == null ? "–" : "$" + v.toFixed(2);
+const eur = v => v == null ? "–" : v.toFixed(2).replace(".", ",") + " €";
+const pc = v => v == null ? "" : `<span class="${v >= 0 ? "up" : "down"}">${v >= 0 ? "+" : ""}${Math.round(v * 100)} %</span>`;
+const store = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d } catch { return d } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} }
+};
+const LIGHT = {g: "Legitim: Aufmerksamkeit (EDHREC/YouTube) oder Cardmarket ziehen mit", y: "Unklar / früh: noch keine Bestätigung", r: "Fragwürdig: Preis springt ohne Rückhalt (oft Ausreißer)"};
+const HYPELIGHT = {g: "Legitim: US-Preis zieht mit", y: "Früh: Aufmerksamkeit steigt, Preis noch ruhig", r: "Fragwürdig: Preis fällt trotz Aufmerksamkeit"};
 
-import ijson
-import requests
+let D = null, PRICES = null, tab = "spikes", spikeView = "log", hypeView = "edh";
+let rlF = store.get("rlF", "all"), rarF = store.get("rarF", "all");
+const RAR = {C: "Common", U: "Uncommon", R: "Rare", M: "Mythic"};
+function filt(arr) {
+  return arr.filter(e => (rlF === "all" || (rlF === "only" ? e.rl : !e.rl)) && (rarF === "all" || e.r === rarF));
+}
+function filterBar() {
+  const b = (k, v, cur, label) => `<button data-${k}="${v}" class="${cur === v ? "on" : ""}">${label}</button>`;
+  return `<div class="seg f"><span>Reserved List:</span>${b("rlf", "all", rlF, "Alle")}${b("rlf", "only", rlF, "Nur RL")}${b("rlf", "hide", rlF, "RL ausblenden")}</div>
+    <div class="seg f"><span>Seltenheit:</span>${b("rarf", "all", rarF, "Alle")}${b("rarf", "U", rarF, "Uncommon")}${b("rarf", "R", rarF, "Rare")}${b("rarf", "M", rarF, "Mythic")}</div>`;
+}
+let watch = store.get("watch", {});
+let ledger = store.get("ledger", []);
+const lastVisit = store.get("lastVisit", null);
 
-# ------------------------- Einstellungen -------------------------
-RARITIES = {"uncommon", "rare", "mythic"}  # Uncommons, Rares, Mythics (Reserved List: alle Seltenheiten)
-MIN_PRICE_USD = 3.0             # Preis nach Spike mindestens $3
-MIN_CHANGE = 0.20               # mindestens +20 %
-RL_MIN_PRICE_USD = 10.0         # Reserved List: Preis mind. $10
-RL_MIN_CHANGE = 0.10            # Reserved List: Tages-Spike ab +10 % ...
-RL_MIN_ABS_USD = 10.0           # ... oder ab +$10
-RL_WEEK_EXTRA = 0.10            # Reserved List: 7 Tage mind. 10 Prozentpunkte über dem RL-Schnitt
-RL_HOLD = 0.90                  # Spike "bestätigt", wenn der Preis am Folgetag noch mind. 90 % hält
-HISTORY_DAYS = 8                # so viele Tage Preis-Schnappschüsse aufheben
-SPIKELOG_DAYS = 30              # Spike-Verlauf: 30 Tage (keine Lücken, wenn du länger nicht reinschaust)
-CM_FEE = 0.05                   # Cardmarket-Verkaufsgebühr (ca. 5 %)
-COSTS_EUR = 1.50                # Versand/Nebenkosten je Karte (Schätzung)
-MIN_PROFIT_EUR = 5.0            # Kandidat erst ab 5 EUR geschätztem Netto-Gewinn
-CATCHUP = 0.80                  # Annahme: EU-Preis zieht auf 80 % des US-Preises (in EUR) nach
-HYPE_MIN_IMPROVE = 0.20         # EDHREC-Rang mind. 20 % besser als vor ~7 Tagen
-HYPE_MIN_PLACES = 200           # ... und mind. 200 Plätze nach vorne
-HYPE_MAX_RANK = 15000           # nur Karten, die schon halbwegs gespielt werden
-STORE = "store"                 # wird im Branch "daten" aufbewahrt
-SITE = "site"                   # wird als Webseite veröffentlicht
-UA = {"User-Agent": "MTGSpikeTool/2.0", "Accept": "application/json"}
+function cmSearch(name) { return "https://www.cardmarket.com/en/Magic/Products/Search?searchString=" + encodeURIComponent(name) + "&language=1&minCondition=3"; }
+function newsLink(name) { return "https://www.google.com/search?tbm=nws&q=" + encodeURIComponent('"' + name + '" mtg'); }
+function ytLink(name) { return "https://www.youtube.com/results?search_query=" + encodeURIComponent('"' + name.split(" // ")[0] + '" mtg'); }
+function redditLink(name) { return "https://www.reddit.com/r/mtgfinance/search/?q=" + encodeURIComponent(name); }
 
-# YouTube: neueste Videos dieser Kanäle werden täglich nach Kartennamen durchsucht.
-# Eintragen als @Handle (wie in der YouTube-Adresse) oder als Kanal-ID (beginnt mit UC).
-YT_CHANNELS = [
-    "@MTGGoldfish",
-    "@TolarianCommunityCollege",
-    "@AlphaInvestments",
-    "@commandcast",
-    "@EDHRECast",
-    "@TCGplayer",
-    "@CardKingdom",
-    "@MTGSalvation",
-]
-YT_DAYS = 7                     # Erwähnungen der letzten 7 Tage zählen
-YT_DESC_CHARS = 400             # nur den Anfang der Videobeschreibung durchsuchen (weniger Fehltreffer)
-# -----------------------------------------------------------------
+function cardHTML(e, opt = {}) {
+  const lights = opt.hype ? HYPELIGHT : LIGHT;
+  const starOn = watch[e.id] ? " on" : "";
+  let lines = "";
+  if (opt.ytl) {
+    lines += `<div class="row">US 7 Tage ${usd(e.old)} → <b>${usd(e.new)}</b> ${pc(e.ch)} · EU ${eur(e.eur)} ${pc(e.euch)}</div>`;
+  } else if (opt.hype) {
+    lines += `<div class="row">EDHREC-Rang ${e.rk_old} → <b>${e.rk}</b> ${pc(e.att)}</div>`;
+    lines += `<div class="row">US ${usd(e.old)} → ${usd(e.new)} ${pc(e.ch)} · EU ${eur(e.eur)} ${pc(e.euch)}</div>`;
+  } else {
+    lines += `<div class="row">US ${usd(e.old)} → <b>${usd(e.new)}</b> ${pc(e.ch)}${e.vs != null ? ` <span class="meta">(${Math.round(e.vs * 100)} Pp. über RL-Schnitt)</span>` : ""}</div>`;
+    lines += `<div class="row">Cardmarket ${eur(e.eur)} ${e.euch != null ? "(" + pc(e.euch) + ")" : ""}${e.p != null ? ` · Gewinn-Schätzung <b class="${e.p >= 0 ? "up" : "down"}">${eur(e.p)}</b>` : ""}</div>`;
+  }
+  return `<div class="item">
+    ${e.img ? `<img loading="lazy" src="${esc(e.img)}" alt="">` : ""}
+    <div class="body">
+      <div class="top"><div class="name"><span class="dot l-${e.l}" title="${esc(lights[e.l])}"></span>${esc(e.n)}${e.rl ? '<span class="tag rl">RL</span>' : ""}${e.yt ? `<span class="tag ytt" title="In ${e.yt} YouTube-Video(s) der letzten 7 Tage erwähnt">▶ ${e.yt}</span>` : ""}${e.f ? '<span class="tag">Foil</span>' : ""}${opt.isNew ? '<span class="tag new">neu</span>' : ""}${e.bo ? '<span class="tag warn">möglicher Buyout</span>' : ""}${opt.conf && e.rl ? (e.ok === 1 ? '<span class="tag okt">bestätigt</span>' : e.ok === 0 ? '<span class="tag warn">nicht gehalten</span>' : '<span class="tag">unbestätigt</span>') : ""}</div>
+      <button class="star${starOn}" data-star="${esc(e.id)}" data-name="${esc(e.n)}" data-set="${esc(e.s)}">★</button></div>
+      <div class="meta">${esc(e.s)} · ${RAR[e.r] || "Sonder"} · ${esc(e.bo ? "Möglicher Buyout: Preis steigt, aber weder Aufmerksamkeit noch Cardmarket ziehen mit" : lights[e.l])}</div>
+      ${lines}
+      ${e.ytv ? `<div class="vids">${e.ytv.map(v => `<a href="${esc(v.u)}" target="_blank" rel="noopener">▶ ${esc(v.t)} <span>· ${esc(v.ch)} · ${esc(v.d)}</span></a>`).join("")}</div>` : ""}
+      <div class="links">
+        <a href="${esc(e.cm || cmSearch(e.n))}" target="_blank" rel="noopener">Cardmarket</a>
+        <a href="${esc(e.sf)}" target="_blank" rel="noopener">Scryfall</a>
+        ${e.ed ? `<a href="${esc(e.ed)}" target="_blank" rel="noopener">EDHREC</a>` : ""}
+        <a href="${newsLink(e.n)}" target="_blank" rel="noopener">Warum? (News)</a>
+        <a href="${redditLink(e.n)}" target="_blank" rel="noopener">Reddit</a>
+        <a href="${ytLink(e.n)}" target="_blank" rel="noopener">YouTube</a>
+        ${opt.buy ? `<button data-buy="${esc(e.n)}" data-price="${e.eur ?? ""}">+ Kaufliste</button>` : ""}
+      </div>
+    </div></div>`;
+}
 
+function list(arr, opt) { return arr.length ? arr.map(e => cardHTML(e, opt)).join("") : `<div class="empty">${opt?.empty || "Nichts gefunden."}</div>`; }
 
-def load(path, default):
-    try:
-        opener = gzip.open if path.endswith(".gz") else open
-        with opener(path, "rt", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return default
+function startHint() {
+  if (!D || D.days >= 2) return "";
+  return `<div class="note">📅 Das Tool sammelt gerade erst Daten. Spikes erscheinen ab dem 2. Tag, die 7-Tage-Ansicht, der Hype-Radar und die Kandidaten werden nach etwa einer Woche richtig aussagekräftig.</div>`;
+}
 
+function renderSpikes() {
+  let h = `<div class="seg">
+    <button data-v="log" class="${spikeView === "log" ? "on" : ""}">Letzte 30 Tage</button>
+    <button data-v="today" class="${spikeView === "today" ? "on" : ""}">Heute</button>
+    <button data-v="week" class="${spikeView === "week" ? "on" : ""}">7 Tage</button></div>` + filterBar() + startHint();
+  const st = D.settings;
+  if (spikeView === "week") {
+    h += `<div class="note">Preisänderung seit ${esc(D.base7 || "–")} (ca. 7 Tage), mind. +${Math.round(st.min_change * 100)} % und $${st.min_usd}.${st.rl_week_extra != null ? `<br><b>RL-Karten:</b> ab $${st.rl_min_usd} und mind. ${Math.round(st.rl_week_extra * 100)} Prozentpunkte stärker als der RL-Schnitt${D.rl_avg != null ? ` (aktuell ${pc(D.rl_avg)})` : " (wird nach ca. 7 Tagen berechnet)"}.` : ""}</div>`;
+    h += list(filt(D.week), {buy: true, empty: "Noch keine 7-Tage-Daten."});
+  } else {
+    if (st.rl_min_usd != null) h += `<details><summary>Regeln für Spikes</summary>Normal: ab $${st.min_usd} und mind. +${Math.round(st.min_change * 100)} % an einem Tag.<br>Reserved List: ab $${st.rl_min_usd} und mind. +${Math.round(st.rl_min_change * 100)} % oder +$${st.rl_min_abs} an einem Tag. „Bestätigt“, wenn der Preis am Folgetag noch hält.</details>`;
+    const items = filt(spikeView === "today" ? D.log.filter(e => e.d === D.today) : D.log);
+    if (spikeView === "log" && lastVisit) {
+      const n = D.log.filter(e => e.d > lastVisit).length;
+      h += `<div class="note">Seit deinem letzten Besuch (${esc(lastVisit)}): <b>${n}</b> neue Spikes.</div>`;
+    }
+    let cur = null;
+    if (!items.length) h += `<div class="empty">Keine Spikes ${spikeView === "today" ? "heute" : "in den letzten 30 Tagen"}.</div>`;
+    for (const e of items) {
+      if (e.d !== cur) { cur = e.d; h += `<h2>${new Date(cur + "T12:00").toLocaleDateString("de-AT", {weekday: "long", day: "numeric", month: "long"})}</h2>`; }
+      h += cardHTML(e, {buy: true, conf: true, isNew: lastVisit && e.d > lastVisit});
+    }
+  }
+  return h;
+}
 
-def save(path, obj, gz=False):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    opener = gzip.open if gz else open
-    with opener(path, "wt", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, separators=(",", ":"))
+function renderHype() {
+  const seg = `<div class="seg"><button data-hv="edh" class="${hypeView === "edh" ? "on" : ""}">EDHREC</button><button data-hv="yt" class="${hypeView === "yt" ? "on" : ""}">▶ YouTube</button></div>`;
+  if (hypeView === "yt") {
+    const i = D.yt_info || {ok: [], bad: [], videos: 0};
+    return seg + filterBar() + `<div class="note">Karten, die in den letzten 7 Tagen in Videos von MTG-Kanälen vorkamen (Titel und Beschreibung), sortiert nach Anzahl der Videos. Die Videos sind direkt verlinkt.
+      <details><summary>Durchsuchte Kanäle</summary>${i.ok.length} Kanäle, ${i.videos} Videos.${i.bad.length ? `<br>Nicht erreichbar: ${esc(i.bad.join(", "))}` : ""}<br>Achtung: Wird eine Karte nur in einer langen Liste erwähnt, kann der Treffer zufällig sein – Video kurz ansehen.</details></div>` +
+      list(filt(D.ytl || []), {ytl: true, buy: true, empty: D.ytl ? "Keine Karten in aktuellen Videos gefunden." : "YouTube-Daten kommen mit dem nächsten Update."});
+  }
+  return seg + filterBar() + startHint() + `<div class="note">Karten, deren Beliebtheit auf EDHREC (Commander) in ca. 7 Tagen deutlich gestiegen ist.<br>
+    <span class="dot l-g"></span>US-Preis zieht mit · <span class="dot l-y"></span>früh, Preis noch ruhig · <span class="dot l-r"></span>Preis fällt trotzdem</div>` +
+    list(filt(D.hype), {hype: true, buy: true, empty: "Noch keine Hype-Signale."});
+}
 
+function renderCand() {
+  const s = D.settings;
+  return filterBar() + startHint() + `<div class="note">Kaufchancen: US-Preis steigt, Cardmarket hinkt hinterher, Ampel nicht rot und geschätzter Gewinn mind. ${eur(s.min_profit)}.
+    <details><summary>Wie wird geschätzt?</summary>Annahme: Cardmarket zieht auf ${Math.round(s.catchup * 100)} % des US-Preises (umgerechnet, 1 $ = ${D.fx.toFixed(3).replace(".", ",")} €) nach. Davon gehen ${Math.round(s.fee * 100)} % Gebühr und ${eur(s.costs)} Nebenkosten ab, minus dein Einkaufspreis. Nur eine Schätzung – Grund des Spikes immer prüfen!</details></div>` +
+    list(filt(D.cand), {buy: true, empty: "Heute keine Kandidaten."});
+}
 
-def num(x):
-    try:
-        v = round(float(x), 2)
-        return v if v > 0 else None
-    except (TypeError, ValueError):
-        return None
+async function renderWatch() {
+  const ids = Object.keys(watch);
+  if (!ids.length) return `<div class="empty">Noch nichts markiert.<br>Tippe bei einer Karte auf ★, um sie zu beobachten.</div>`;
+  if (!PRICES) { try { PRICES = await (await fetch("prices.json?" + Date.now())).json(); } catch { PRICES = {}; } }
+  return ids.map(id => {
+    const w = watch[id], p = PRICES[id];
+    const now = p ? (p[2] ?? p[3]) : null, wk = p ? p[6] : null;
+    return `<div class="item"><div class="body">
+      <div class="top"><div class="name">${esc(w.n)}${p && p[8] ? '<span class="tag rl">RL</span>' : ""}</div><button class="star on" data-star="${esc(id)}">★</button></div>
+      <div class="meta">${esc(w.s)} · beobachtet seit ${esc(w.since)}</div>
+      ${p ? `<div class="row">US ${usd(p[2])}${p[3] ? " / Foil " + usd(p[3]) : ""} · 7 Tage ${pc(now && wk ? (now - wk) / wk : null)}</div>
+      <div class="row">Cardmarket ${eur(p[4])}${p[5] ? " / Foil " + eur(p[5]) : ""}</div>
+      <div class="row meta">Beim Markieren: US ${usd(w.usd)}${w.usd && now ? " → jetzt " + pc((now - w.usd) / w.usd) : ""}</div>` : `<div class="row meta">Keine aktuellen Preise.</div>`}
+      <div class="links"><a href="${cmSearch(w.n)}" target="_blank" rel="noopener">Cardmarket</a>
+      <a href="https://scryfall.com/search?q=${encodeURIComponent('!"' + w.n + '"')}" target="_blank" rel="noopener">Scryfall</a>
+      <a href="${newsLink(w.n)}" target="_blank" rel="noopener">News</a></div>
+    </div></div>`;
+  }).join("");
+}
 
+function profitOf(x) {
+  if (x.sell === "" || x.sell == null) return null;
+  return +(x.sell * (1 - (x.fee ?? 5) / 100) - x.buy - (x.costs || 0)).toFixed(2);
+}
 
-def pct(new, old):
-    if not new or not old:
-        return None
-    return round((new - old) / old, 3)
+function renderLedger(prefill = {}) {
+  let invested = 0, profit = 0, open = 0;
+  for (const x of ledger) { const p = profitOf(x); if (p == null) { open++; invested += x.buy + (x.costs || 0); } else profit += p; }
+  const today = new Date().toISOString().slice(0, 10);
+  let h = `<div class="sum"><div><b class="${profit >= 0 ? "up" : "down"}">${eur(profit)}</b><span>Gewinn (verkauft)</span></div>
+    <div><b>${eur(invested)}</b><span>gebunden</span></div><div><b>${open}</b><span>offen</span></div></div>
+    <form id="lf">
+      <label class="full">Karte<input name="name" required value="${esc(prefill.name || "")}"></label>
+      <label>Kaufdatum<input name="date" type="date" value="${today}"></label>
+      <label>Kaufpreis €<input name="buy" inputmode="decimal" required value="${prefill.price ? String(prefill.price).replace(".", ",") : ""}"></label>
+      <label>Versand/Kosten €<input name="costs" inputmode="decimal" placeholder="0"></label>
+      <label>Gebühr %<input name="fee" inputmode="decimal" value="5"></label>
+      <label class="full">Verkaufspreis € (leer = noch nicht verkauft)<input name="sell" inputmode="decimal"></label>
+      <button class="btn full" type="submit">Eintragen</button>
+    </form>`;
+  if (!ledger.length) h += `<div class="empty">Noch keine Einträge.</div>`;
+  ledger.forEach((x, i) => {
+    const p = profitOf(x);
+    h += `<div class="item"><div class="body">
+      <div class="top"><div class="name">${esc(x.name)}</div><span class="meta">${esc(x.date)}</span></div>
+      <div class="row">Kauf ${eur(x.buy)}${x.costs ? " + " + eur(x.costs) : ""} · ${p == null ? "<b>noch offen</b>" : "Verkauf " + eur(x.sell) + " (−" + x.fee + " %)"}</div>
+      ${p != null ? `<div class="row">Gewinn <b class="${p >= 0 ? "up" : "down"}">${eur(p)}</b>${p >= 0 && p < 5 ? ' <span class="meta">(unter 5 € Ziel)</span>' : ""}</div>` : ""}
+      <div class="links">${p == null ? `<button data-sell="${i}">Verkauft eintragen</button>` : ""}<button data-del="${i}">Löschen</button></div>
+    </div></div>`;
+  });
+  h += `<div class="note">Die Liste wird nur auf diesem Gerät gespeichert. Mach ab und zu eine Sicherung:</div>
+    <div class="seg"><button id="exp">💾 Sicherung speichern</button><button id="imp">📂 Sicherung laden</button></div>
+    <input type="file" id="impf" accept="application/json" hidden>`;
+  return h;
+}
 
+const num = v => { const n = parseFloat(String(v ?? "").replace(",", ".")); return isNaN(n) ? null : n; };
 
-def get_fx():
-    for url in ("https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR",
-                "https://api.frankfurter.app/latest?from=USD&to=EUR"):
-        try:
-            r = requests.get(url, headers=UA, timeout=20)
-            r.raise_for_status()
-            return float(r.json()["rates"]["EUR"])
-        except Exception:
-            pass
-    return 0.86  # Notfall-Wert
+async function render(prefill) {
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.t === tab));
+  if (!D && tab !== "ledger" && tab !== "watch") { $("#main").innerHTML = `<div class="empty">Daten werden geladen …</div>`; return; }
+  const m = $("#main");
+  if (tab === "spikes") m.innerHTML = renderSpikes();
+  else if (tab === "hype") m.innerHTML = renderHype();
+  else if (tab === "cand") m.innerHTML = renderCand();
+  else if (tab === "watch") { m.innerHTML = `<div class="empty">Lade …</div>`; m.innerHTML = await renderWatch(); }
+  else m.innerHTML = renderLedger(prefill);
+  window.scrollTo(0, 0);
+}
 
+document.addEventListener("click", ev => {
+  const t = ev.target.closest("button");
+  if (!t) return;
+  if (t.dataset.t) { tab = t.dataset.t; render(); return; }
+  if (t.dataset.hv) { hypeView = t.dataset.hv; render(); return; }
+  if (t.dataset.v) { spikeView = t.dataset.v; render(); return; }
+  if (t.dataset.rlf) { rlF = t.dataset.rlf; store.set("rlF", rlF); render(); return; }
+  if (t.dataset.rarf) { rarF = t.dataset.rarf; store.set("rarF", rarF); render(); return; }
+  if (t.dataset.star) {
+    const id = t.dataset.star;
+    if (watch[id]) { delete watch[id]; t.classList.remove("on"); if (tab === "watch") render(); }
+    else {
+      const all = [...(D?.log || []), ...(D?.week || []), ...(D?.hype || []), ...(D?.cand || [])];
+      const e = all.find(x => x.id === id);
+      watch[id] = {n: t.dataset.name, s: t.dataset.set, usd: e ? e.new : null, since: new Date().toISOString().slice(0, 10)};
+      t.classList.add("on");
+    }
+    store.set("watch", watch); return;
+  }
+  if (t.dataset.buy !== undefined) { tab = "ledger"; render({name: t.dataset.buy, price: t.dataset.price}); return; }
+  if (t.dataset.del !== undefined) { if (confirm("Eintrag löschen?")) { ledger.splice(+t.dataset.del, 1); store.set("ledger", ledger); render(); } return; }
+  if (t.dataset.sell !== undefined) {
+    const v = num(prompt("Verkaufspreis in €:")); if (v == null) return;
+    ledger[+t.dataset.sell].sell = v; store.set("ledger", ledger); render(); return;
+  }
+  if (t.id === "exp") {
+    const blob = new Blob([JSON.stringify({ledger, watch}, null, 1)], {type: "application/json"});
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = "mtg-sicherung-" + new Date().toISOString().slice(0, 10) + ".json"; a.click(); return;
+  }
+  if (t.id === "imp") { $("#impf").click(); return; }
+});
 
-def download_bulk(path="cards.json"):
-    r = requests.get("https://api.scryfall.com/bulk-data", headers=UA, timeout=60)
-    print("Scryfall-Antwort:", r.status_code)
-    r.raise_for_status()
-    entries = r.json().get("data", [])
-    entry = next((e for e in entries if e.get("type") == "default_cards"), None)
-    if entry is None:
-        raise SystemExit("Scryfall: Eintrag default_cards fehlt. Typen: " + str([e.get("type") for e in entries]))
+document.addEventListener("change", async ev => {
+  if (ev.target.id !== "impf" || !ev.target.files[0]) return;
+  try {
+    const j = JSON.parse(await ev.target.files[0].text());
+    if (!confirm("Sicherung laden? Aktuelle Liste und Watchlist werden ersetzt.")) return;
+    ledger = j.ledger || []; watch = j.watch || {};
+    store.set("ledger", ledger); store.set("watch", watch); render();
+  } catch { alert("Datei konnte nicht gelesen werden."); }
+});
 
-    def find_url(obj):
-        for k, v in obj.items():
-            if "download" in k and isinstance(v, str) and v.startswith("http"):
-                return v
-        return None
+document.addEventListener("submit", ev => {
+  if (ev.target.id !== "lf") return;
+  ev.preventDefault();
+  const f = new FormData(ev.target), buy = num(f.get("buy"));
+  if (buy == null) { alert("Bitte Kaufpreis angeben."); return; }
+  ledger.unshift({name: f.get("name").trim(), date: f.get("date"), buy, costs: num(f.get("costs")) || 0,
+    fee: num(f.get("fee")) ?? 5, sell: num(f.get("sell"))});
+  store.set("ledger", ledger); render();
+});
 
-    url = find_url(entry)
-    if not url and entry.get("uri"):  # Detailseite des Eintrags nachladen
-        url = find_url(requests.get(entry["uri"], headers=UA, timeout=60).json())
-    if not url:
-        raise SystemExit("Scryfall: Download-Link nicht gefunden. Eintrag: " + json.dumps(entry)[:800])
-    print("Lade Kartendatei:", url)
-    with requests.get(url, headers=UA, stream=True, timeout=900) as r:
-        r.raise_for_status()
-        with open(path, "wb") as f:
-            for chunk in r.iter_content(1 << 20):
-                f.write(chunk)
-    return path
-
-
-def cm_link(url):
-    """Cardmarket-Link mit Filter: Englisch, Zustand ab Excellent."""
-    if not url:
-        return None
-    return url + ("&" if "?" in url else "?") + "language=1&minCondition=3"
-
-
-def iter_cards(path):
-    """Liest die Scryfall-Datei: egal ob gepackt (.gz) oder nicht,
-    als große Liste ([...]) oder eine Karte pro Zeile (JSON Lines)."""
-    with open(path, "rb") as raw:
-        gz = raw.read(2) == b"\x1f\x8b"
-    opener = gzip.open if gz else open
-    with opener(path, "rb") as f:
-        first = f.read(64).lstrip()[:1]
-    with opener(path, "rb") as f:
-        if first == b"[":
-            yield from ijson.items(f, "item", use_float=True)
-        else:
-            for line in f:
-                line = line.strip().rstrip(b",")
-                if line and line not in (b"[", b"]"):
-                    yield json.loads(line)
-
-
-def parse(path):
-    cards, snap, by_oracle = {}, {}, {}
-    if True:
-        for c in iter_cards(path):
-            rl = bool(c.get("reserved"))
-            if c.get("lang") != "en" or c.get("digital") or (c.get("rarity") not in RARITIES and not rl):
-                continue
-            p = c.get("prices") or {}
-            usd, usdf, eur, eurf = (num(p.get(k)) for k in ("usd", "usd_foil", "eur", "eur_foil"))
-            if not any((usd, usdf, eur, eurf)):
-                continue
-            rank = c.get("edhrec_rank")
-            snap[c["id"]] = [usd, usdf, eur, eurf, rank]
-            faces = c.get("card_faces") or [{}]
-            img = (c.get("image_uris") or {}).get("small") or (faces[0].get("image_uris") or {}).get("small")
-            oid = c.get("oracle_id") or c["id"]
-            cards[c["id"]] = {
-                "n": c.get("name"), "s": c.get("set_name"), "r": c.get("rarity", "?")[0].upper(),
-                "o": oid, "sf": c.get("scryfall_uri"), "rl": 1 if rl else 0,
-                "cm": cm_link((c.get("purchase_uris") or {}).get("cardmarket")),
-                "ed": (c.get("related_uris") or {}).get("edhrec"), "img": img,
-            }
-            by_oracle.setdefault(oid, []).append(c["id"])
-    return cards, snap, by_oracle
-
-
-# ------------------------- YouTube -------------------------
-YT_NS = {"a": "http://www.w3.org/2005/Atom", "yt": "http://www.youtube.com/xml/schemas/2015",
-         "m": "http://search.yahoo.com/mrss/"}
-YT_HDR = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
-          "Accept-Language": "en-US,en;q=0.8", "Cookie": "CONSENT=YES+1; SOCS=CAI"}
-
-
-def yt_resolve(handle, cache):
-    """@Handle -> Kanal-ID (UC...). Ergebnis wird gespeichert, damit es nur einmal nachgeschaut wird."""
-    if handle.startswith("UC"):
-        return handle
-    if cache.get(handle):
-        return cache[handle]
-    try:
-        html = requests.get("https://www.youtube.com/" + handle, headers=YT_HDR, timeout=30).text
-    except Exception:
-        return None
-    for pat in (r"feeds/videos\.xml\?channel_id=(UC[\w-]{22})", r'"externalId":"(UC[\w-]{22})"',
-                r'itemprop="identifier" content="(UC[\w-]{22})"', r'"channelId":"(UC[\w-]{22})"'):
-        m = re.search(pat, html)
-        if m:
-            cache[handle] = m.group(1)
-            return m.group(1)
-    return None
-
-
-def yt_videos(channel_id):
-    r = requests.get("https://www.youtube.com/feeds/videos.xml?channel_id=" + channel_id,
-                     headers=YT_HDR, timeout=30)
-    r.raise_for_status()
-    root = ET.fromstring(r.content)
-    ch = root.findtext("a:title", "", YT_NS)
-    out = []
-    for e in root.findall("a:entry", YT_NS):
-        vid = e.findtext("yt:videoId", "", YT_NS)
-        desc = e.findtext("m:group/m:description", "", YT_NS) or ""
-        out.append({"v": vid, "t": e.findtext("a:title", "", YT_NS), "ch": ch,
-                    "d": (e.findtext("a:published", "", YT_NS) or "")[:10],
-                    "txt": desc[:YT_DESC_CHARS]})
-    return out
-
-
-def name_index(names):
-    """Kartennamen nach erstem Wort sortiert, damit die Suche im Text schnell geht."""
-    idx = {}
-    for n in names:
-        n = n.split(" // ")[0].strip()
-        if not n or not n[0].isupper():
-            continue
-        if " " not in n and len(n) < 8:   # kurze Einwort-Namen (z. B. "Opt") ergeben zu viele Fehltreffer
-            continue
-        idx.setdefault(n.split(" ")[0].rstrip(",:"), set()).add(n)
-    return {k: sorted(v, key=len, reverse=True) for k, v in idx.items()}
-
-
-def find_names(text, idx):
-    found = set()
-    text = text.replace("\u2019", "'")  # typografisches Apostroph vereinheitlichen
-    for m in re.finditer(r"[A-Z][\w'\-]*", text):
-        for n in idx.get(m.group(0).rstrip(",:"), ()):
-            end = m.start() + len(n)
-            if text.startswith(n, m.start()) and (end == len(text) or not text[end].isalnum()):
-                found.add(n)
-                break
-    return found
-
-
-def youtube(names, today):
-    """Sammelt Videos der Kanäle und zählt, in wie vielen Videos (7 Tage) eine Karte erwähnt wird."""
-    store = load(f"{STORE}/yt.json", {})
-    cache, videos = store.get("ids", {}), store.get("videos", {})
-    ok, bad = [], []
-    for h in YT_CHANNELS:
-        cid = yt_resolve(h, cache)
-        if not cid:
-            bad.append(h)
-            continue
-        try:
-            for v in yt_videos(cid):
-                if v["v"]:
-                    videos[v["v"]] = v
-            ok.append(h)
-        except Exception:
-            bad.append(h)
-    cutoff = (dt.date.fromisoformat(today) - dt.timedelta(days=YT_DAYS)).isoformat()
-    videos = {k: v for k, v in videos.items() if v.get("d", "") >= cutoff}
-    idx = name_index(names)
-    hits = {}
-    for v in sorted(videos.values(), key=lambda v: v["d"], reverse=True):
-        for n in find_names(v["t"] + "\n" + v.get("txt", ""), idx):
-            hits.setdefault(n, []).append({"t": v["t"], "u": "https://www.youtube.com/watch?v=" + v["v"],
-                                           "ch": v["ch"], "d": v["d"]})
-    save(f"{STORE}/yt.json", {"ids": cache, "videos": videos})
-    print(f"YouTube: {len(ok)} Kanäle ok, nicht erreichbar: {bad or '-'}; {len(videos)} Videos, {len(hits)} Karten erwähnt")
-    return hits, {"ok": ok, "bad": bad, "videos": len(videos)}
-
-
-def pick_base(hist, today, days_back):
-    """Schnappschuss, der am nächsten an 'vor X Tagen' liegt (aber vor heute)."""
-    dates = sorted(d for d in hist if d < today)
-    if not dates:
-        return None, {}
-    if days_back == 1:
-        return dates[-1], hist[dates[-1]]
-    target = (dt.date.fromisoformat(today) - dt.timedelta(days=days_back)).isoformat()
-    best = min(dates, key=lambda d: abs((dt.date.fromisoformat(d) - dt.date.fromisoformat(target)).days))
-    return best, hist[best]
-
-
-def is_spike(new, old, rl):
-    if not new or not old:
-        return False
-    if rl:
-        return new >= RL_MIN_PRICE_USD and ((new - old) / old >= RL_MIN_CHANGE or new - old >= RL_MIN_ABS_USD)
-    return new >= MIN_PRICE_USD and (new - old) / old >= MIN_CHANGE
-
-
-def median(vals):
-    vals = sorted(vals)
-    if not vals:
-        return None
-    m = len(vals) // 2
-    return vals[m] if len(vals) % 2 else (vals[m - 1] + vals[m]) / 2
-
-
-def main():
-    today = os.environ.get("TODAY") or dt.date.today().isoformat()
-    fx = get_fx()
-    path = os.environ.get("BULK_FILE") or download_bulk()
-    cards, snap, by_oracle = parse(path)
-    print(f"{len(snap)} Karten eingelesen, Kurs 1 USD = {fx} EUR")
-
-    hist = load(f"{STORE}/history.json.gz", {})
-    hist.pop(today, None)
-    d1, base1 = pick_base(hist, today, 1)
-    d7, base7 = pick_base(hist, today, 7)
-    empty = [None] * 5
-
-    # YouTube-Erwähnungen (ein Fehler hier darf das restliche Tool nie stoppen)
-    try:
-        yt, yt_info = youtube({c["n"] for c in cards.values()}, today)
-    except Exception as ex:
-        print("YouTube übersprungen:", ex)
-        yt, yt_info = {}, {"ok": [], "bad": YT_CHANNELS, "videos": 0}
-
-    def front(n):
-        return (n or "").split(" // ")[0].strip()
-
-    def make(cid, foil, base):
-        s, b, w = snap[cid], base.get(cid) or empty, base7.get(cid) or empty
-        ui, ei = (1, 3) if foil else (0, 2)
-        new, old = s[ui], b[ui]
-        eur_now, eur_old = s[ei], b[ei]
-        rank_now, rank_old = s[4], w[4]
-        att = pct(rank_old, rank_now) if rank_now and rank_old else None  # >0 = Aufmerksamkeit steigt
-        eu = pct(eur_now, eur_old)
-        ytn = len(yt.get(front(cards[cid]["n"]), []))
-        if ytn:
-            light = "g"   # auf YouTube erwähnt = echte Aufmerksamkeit
-        elif att is None and eu is None:
-            light = "y"
-        elif (att or 0) >= 0.10 or (eu or 0) >= 0.10:
-            light = "g"
-        else:
-            light = "r"
-        profit = None
-        if eur_now and new:
-            profit = round(new * fx * CATCHUP * (1 - CM_FEE) - COSTS_EUR - eur_now, 2)
-        e = dict(cards[cid])
-        ch = pct(new, old)
-        e.update({"id": cid, "f": foil, "old": old, "new": new, "ch": ch,
-                  "eur": eur_now, "euch": eu, "rk": rank_now, "att": att, "l": light, "p": profit})
-        if ytn:
-            e["yt"] = ytn
-        if e["rl"] and light == "r" and (ch or 0) > 0:
-            e["bo"] = 1  # Preis steigt ohne Aufmerksamkeit und ohne Cardmarket -> möglicher Buyout
-        return e
-
-    def spikes_vs(base):
-        out = []
-        for cid, s in snap.items():
-            b = base.get(cid)
-            if not b:
-                continue
-            for foil, i in ((False, 0), (True, 1)):
-                if is_spike(s[i], b[i], cards[cid]["rl"]):
-                    out.append(make(cid, foil, base))
-        return sorted(out, key=lambda e: -e["ch"])
-
-    # RL-Schnitt: typische Preisänderung aller RL-Karten (ab $10) in ca. 7 Tagen (Median)
-    rl_avg = None
-    if base7:
-        rl_avg = median([(s[0] - base7[cid][0]) / base7[cid][0] for cid, s in snap.items()
-                         if cards[cid]["rl"] and cid in base7 and s[0] and base7[cid][0]
-                         and base7[cid][0] >= RL_MIN_PRICE_USD])
-        rl_avg = round(rl_avg, 3) if rl_avg is not None else None
-
-    def rl_week():
-        out = []
-        if rl_avg is None:
-            return out
-        for cid, s in snap.items():
-            b = base7.get(cid)
-            if not b or not cards[cid]["rl"]:
-                continue
-            for foil, i in ((False, 0), (True, 1)):
-                new, old = s[i], b[i]
-                if new and old and new >= RL_MIN_PRICE_USD and (new - old) / old - rl_avg >= RL_WEEK_EXTRA:
-                    e = make(cid, foil, base7)
-                    e["vs"] = round(e["ch"] - rl_avg, 3)
-                    out.append(e)
-        return out
-
-    today_spikes = spikes_vs(base1) if base1 else []
-    week = []
-    if base7:
-        week = [e for e in spikes_vs(base7) if not e["rl"]][:300] + rl_week()
-        week.sort(key=lambda e: -e["ch"])
-
-    # Spike-Verlauf (30 Tage)
-    log = load(f"{STORE}/spikelog.json", [])
-    log = [e for e in log if e.get("d") != today]
-    for e in today_spikes:
-        log.append(dict(e, d=today))
-    cutoff = (dt.date.fromisoformat(today) - dt.timedelta(days=SPIKELOG_DAYS)).isoformat()
-    log = [e for e in log if e["d"] >= cutoff]
-    # RL-Spikes: hält der Preis am Folgetag? (1 = bestätigt, 0 = nicht gehalten, fehlt = unbestätigt)
-    for e in log:
-        if e.get("rl") and e["d"] < today and "ok" not in e and e["id"] in snap:
-            cur = snap[e["id"]][1 if e["f"] else 0]
-            if cur and e.get("new"):
-                e["ok"] = 1 if cur >= e["new"] * RL_HOLD else 0
-    log.sort(key=lambda e: (e["d"], e["ch"] or 0), reverse=True)
-
-    # Kandidaten: US steigt, EU hinkt hinterher, Gewinn >= 5 EUR, Ampel nicht rot
-    cand, seen = [], set()
-    for e in today_spikes + week:
-        k = (e["id"], e["f"])
-        if k in seen or e["l"] == "r" or e["p"] is None or e["p"] < MIN_PROFIT_EUR:
-            continue
-        if e["euch"] is not None and e["ch"] and e["euch"] > e["ch"] / 2:
-            continue  # Cardmarket ist schon nachgezogen
-        seen.add(k)
-        cand.append(e)
-    cand.sort(key=lambda e: -e["p"])
-
-    # Hype-Radar
-    hype = []
-    if base7:
-        for oid, ids in by_oracle.items():
-            rank_now = snap[ids[0]][4]
-            olds = [base7[i][4] for i in ids if i in base7 and base7[i][4]]
-            if not rank_now or not olds or rank_now > HYPE_MAX_RANK:
-                continue
-            rank_old = olds[0]
-            imp = (rank_old - rank_now) / rank_old
-            if imp < HYPE_MIN_IMPROVE or rank_old - rank_now < HYPE_MIN_PLACES:
-                continue
-            with_eur = [i for i in ids if snap[i][2]]
-            rep = min(with_eur, key=lambda i: snap[i][2]) if with_eur else ids[0]
-            e = make(rep, False, base7)
-            usd_ch = e["ch"]
-            e["l"] = "g" if (usd_ch or 0) >= 0.05 else ("r" if (usd_ch or 0) <= -0.10 else "y")
-            e.update({"rk_old": rank_old, "att": round(imp, 3)})
-            hype.append(e)
-        hype.sort(key=lambda e: -e["att"])
-        hype = hype[:150]
-
-    # YouTube-Liste: Karten, die in den letzten Tagen in Videos vorkamen
-    by_name = {}
-    for oid, ids in by_oracle.items():
-        by_name.setdefault(front(cards[ids[0]]["n"]), []).extend(ids)
-    ytl = []
-    for n, vids in yt.items():
-        ids = by_name.get(n)
-        if not ids:
-            continue
-        with_eur = [i for i in ids if snap[i][2]]
-        rep = min(with_eur, key=lambda i: snap[i][2]) if with_eur else ids[0]
-        e = make(rep, False, base7)
-        e["ytv"] = vids[:5]
-        ytl.append(e)
-    ytl.sort(key=lambda e: (-e["yt"], -(e["ch"] or 0)))
-    ytl = ytl[:150]
-
-    # Preise für Watchlist
-    prices = {}
-    for cid, s in snap.items():
-        if max(x or 0 for x in s[:4]) < 1:
-            continue
-        w = base7.get(cid) or empty
-        c = cards[cid]
-        prices[cid] = [c["n"], c["s"], s[0], s[1], s[2], s[3], w[0], w[2], c["rl"]]
-
-    hist[today] = snap
-    for d in sorted(hist)[:-HISTORY_DAYS]:
-        del hist[d]
-
-    save(f"{STORE}/history.json.gz", hist, gz=True)
-    save(f"{STORE}/spikelog.json", log)
-    save(f"{SITE}/prices.json", prices)
-    save(f"{SITE}/data.json", {
-        "updated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="minutes"),
-        "today": today, "base1": d1, "base7": d7, "days": len(hist), "fx": fx,
-        "settings": {"min_usd": MIN_PRICE_USD, "min_change": MIN_CHANGE, "fee": CM_FEE,
-                     "costs": COSTS_EUR, "min_profit": MIN_PROFIT_EUR, "catchup": CATCHUP,
-                     "rl_min_usd": RL_MIN_PRICE_USD, "rl_min_change": RL_MIN_CHANGE,
-                     "rl_min_abs": RL_MIN_ABS_USD, "rl_week_extra": RL_WEEK_EXTRA},
-        "rl_avg": rl_avg,
-        "log": log, "week": week, "cand": cand, "hype": hype, "ytl": ytl, "yt_info": yt_info,
-    })
-    print(f"Spikes heute: {len(today_spikes)}, 7 Tage: {len(week)}, Kandidaten: {len(cand)}, "
-          f"Hype: {len(hype)}, YouTube: {len(ytl)}")
-
-
-if __name__ == "__main__":
-    main()
+(async () => {
+  render();
+  try {
+    D = await (await fetch("data.json?" + Date.now())).json();
+    const upd = new Date(D.updated);
+    $("#upd").textContent = "Stand: " + upd.toLocaleString("de-AT", {dateStyle: "medium", timeStyle: "short"}) + " · 1 $ = " + D.fx.toFixed(3).replace(".", ",") + " €";
+    render();
+    store.set("lastVisit", D.today);
+  } catch {
+    $("#upd").textContent = "Daten konnten nicht geladen werden – läuft das tägliche Update schon?";
+    render();
+  }
+})();
+</script>
+</body>
+</html>
