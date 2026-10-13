@@ -91,15 +91,16 @@ const LIGHT = {g: "Legitim: Aufmerksamkeit (EDHREC/YouTube) oder Cardmarket zieh
 const HYPELIGHT = {g: "Legitim: US-Preis zieht mit", y: "Früh: Aufmerksamkeit steigt, Preis noch ruhig", r: "Fragwürdig: Preis fällt trotz Aufmerksamkeit"};
 
 let D = null, PRICES = null, tab = "spikes", spikeView = "log", hypeView = "edh";
-let rlF = store.get("rlF", "all"), rarF = store.get("rarF", "all");
+let rlF = store.get("rlF", "all"), rarF = store.get("rarF", "all"), foilF = store.get("foilF", "all");
 const RAR = {C: "Common", U: "Uncommon", R: "Rare", M: "Mythic"};
 function filt(arr) {
-  return arr.filter(e => (rlF === "all" || (rlF === "only" ? e.rl : !e.rl)) && (rarF === "all" || e.r === rarF));
+  return arr.filter(e => (rlF === "all" || (rlF === "only" ? e.rl : !e.rl)) && (rarF === "all" || e.r === rarF) && (foilF === "all" || (foilF === "foil" ? e.f : !e.f)));
 }
 function filterBar() {
   const b = (k, v, cur, label) => `<button data-${k}="${v}" class="${cur === v ? "on" : ""}">${label}</button>`;
   return `<div class="seg f"><span>Reserved List:</span>${b("rlf", "all", rlF, "Alle")}${b("rlf", "only", rlF, "Nur RL")}${b("rlf", "hide", rlF, "RL ausblenden")}</div>
-    <div class="seg f"><span>Seltenheit:</span>${b("rarf", "all", rarF, "Alle")}${b("rarf", "U", rarF, "Uncommon")}${b("rarf", "R", rarF, "Rare")}${b("rarf", "M", rarF, "Mythic")}</div>`;
+    <div class="seg f"><span>Seltenheit:</span>${b("rarf", "all", rarF, "Alle")}${b("rarf", "U", rarF, "Uncommon")}${b("rarf", "R", rarF, "Rare")}${b("rarf", "M", rarF, "Mythic")}</div>
+    <div class="seg f"><span>Foil:</span>${b("foilf", "all", foilF, "Alle")}${b("foilf", "nonfoil", foilF, "Non-Foil")}${b("foilf", "foil", foilF, "Nur Foil")}</div>`;
 }
 let watch = store.get("watch", {});
 let ledger = store.get("ledger", []);
@@ -273,6 +274,7 @@ document.addEventListener("click", ev => {
   if (t.dataset.hv) { hypeView = t.dataset.hv; render(); return; }
   if (t.dataset.v) { spikeView = t.dataset.v; render(); return; }
   if (t.dataset.rlf) { rlF = t.dataset.rlf; store.set("rlF", rlF); render(); return; }
+  if (t.dataset.foilf) { foilF = t.dataset.foilf; store.set("foilF", foilF); render(); return; }
   if (t.dataset.rarf) { rarF = t.dataset.rarf; store.set("rarF", rarF); render(); return; }
   if (t.dataset.star) {
     const id = t.dataset.star;
