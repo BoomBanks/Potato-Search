@@ -106,7 +106,7 @@ function filterBar() {
     <div class="seg f"><span>Foil:</span>${b("foilf", "all", foilF, "Alle")}${b("foilf", "nonfoil", foilF, "Non-Foil")}${b("foilf", "foil", foilF, "Nur Foil")}</div>`;
 }
 let watch = store.get("watch", {});
-let realP = store.get("realP", {});   // vom User eingetippte echte Cardmarket-Preise
+let realP = store.get("realT", {});   // vom User eingetippte Warenkorb-Gesamtpreise (Karte + Versand)
 let ledger = store.get("ledger", []);
 const lastVisit = store.get("lastVisit", null);
 
@@ -116,33 +116,45 @@ function cmSearch(name) {
   return "https://www.cardmarket.com/en/Magic/Products/Search?searchString=" + encodeURIComponent(q);
 }
 // Höchster Einkaufspreis auf Cardmarket, bei dem nach Gebühren und Kosten noch das Gewinnziel bleibt
-function maxBuy(usdNow) {
-  if (!D || !usdNow) return null;
-  const s = D.settings;
-  return +(usdNow * D.fx * s.catchup * (1 - s.fee) - s.costs - s.min_profit).toFixed(2);
+function ship() {
+  const s = (D && D.settings) || {};
+  return {low: s.ship_low ?? 2, high: s.ship_high ?? 15.49, limit: s.ship_limit ?? 25};
 }
-function realProfit(usdNow, price) {
-  const m = maxBuy(usdNow);
-  return m == null || price == null ? null : +(m + D.settings.min_profit - price).toFixed(2);
+function shipFor(price) { const v = ship(); return price >= v.limit ? v.high : v.low; }
+// erwarteter Verkaufserlös nach Gebühr (ohne Einkauf und Versand)
+function netSale(usdNow) { const s = D.settings; return usdNow * D.fx * s.catchup * (1 - s.fee); }
+// Max. gesamt = was du insgesamt (Karte + Versand) höchstens zahlen darfst, damit das Gewinnziel bleibt
+function maxTotal(usdNow) { return !D || !usdNow ? null : +(netSale(usdNow) - D.settings.min_profit).toFixed(2); }
+function realProfit(usdNow, total) {
+  if (!D || !usdNow || total == null) return null;
+  return +(netSale(usdNow) - total).toFixed(2);
 }
 function realText(usdNow, price) {
   const g = realProfit(usdNow, price);
-  if (g == null) return usdNow ? "Preis eintippen → Gewinn" : "";
+  if (g == null) return usdNow ? "eintippen → Gewinn" : "";
   return `Gewinn: <b class="${g >= D.settings.min_profit ? "up" : "down"}">${eur(g)}</b>${g < D.settings.min_profit ? (g > 0 ? " (unter Ziel)" : " (Verlust)") : " ✓"}`;
 }
 function realRow(key, usdNow, label) {
   if (!usdNow) return "";
   const v = realP[key];
-  return `<div class="real">${label || ""}Echter Preis €
-    <input inputmode="decimal" placeholder="z. B. 8,50" data-real="${esc(key)}" data-usd="${usdNow}" value="${v != null ? String(v).replace(".", ",") : ""}">
+  return `<div class="real">${label || ""}Warenkorb gesamt €
+    <input inputmode="decimal" placeholder="Karte+Versand" data-real="${esc(key)}" data-usd="${usdNow}" value="${v != null ? String(v).replace(".", ",") : ""}">
     <span data-realout="${esc(key)}">${realText(usdNow, v)}</span></div>`;
 }
 function maxRow(usdNow, eurNow, label) {
-  const m = maxBuy(usdNow);
-  if (m == null) return "";
-  if (m <= 0) return `<div class="row meta">${label || ""}Max. Einkauf: kein ${eur(D.settings.min_profit)}-Gewinn möglich</div>`;
-  const ok = eurNow != null && eurNow <= m;
-  return `<div class="row">${label || ""}Max. Einkauf: <b class="${eurNow == null ? "" : ok ? "up" : "down"}">${eur(m)}</b>${eurNow != null ? ` <span class="meta">(${ok ? "aktuell darunter ✓" : "aktuell zu teuer"})</span>` : ""}</div>`;
+  const t = maxTotal(usdNow);
+  if (t == null) return "";
+  if (t <= 0) return `<div class="row meta">${label || ""}Max. gesamt: kein ${eur(D.settings.min_profit)}-Gewinn möglich</div>`;
+  const v = ship();
+  const est = eurNow != null ? eurNow + shipFor(eurNow) : null;   // Trend-Preis + geschätzter Versand
+  const ok = est != null && est <= t;
+  // Orientierung: wie teuer darf die Karte bei günstigem bzw. teurem Versand sein?
+  const lowCard = Math.min(t - v.low, v.limit - 0.01), highCard = t - v.high;
+  const hints = [];
+  if (lowCard > 0) hints.push(`bei ${eur(v.low)} Versand: Karte bis ${eur(+lowCard.toFixed(2))}`);
+  hints.push(highCard >= v.limit ? `bei ${eur(v.high)} Versand: Karte bis ${eur(+highCard.toFixed(2))}` : `teurer Versand (${eur(v.high)}) lohnt nicht`);
+  return `<div class="row">${label || ""}Max. gesamt (Karte + Versand): <b class="${est == null ? "" : ok ? "up" : "down"}">${eur(t)}</b>${est != null ? ` <span class="meta">(${ok ? "Trend-Preis passt ✓" : "Trend-Preis zu teuer"})</span>` : ""}</div>
+    <div class="row meta">${hints.join(" · ")}</div>`;
 }
 function newsLink(name) { return "https://www.google.com/search?tbm=nws&q=" + encodeURIComponent('"' + name + '" mtg'); }
 function ytLink(name) { return "https://www.youtube.com/results?search_query=" + encodeURIComponent('"' + name.split(" // ")[0] + '" mtg'); }
@@ -232,7 +244,7 @@ function renderHype() {
 function renderCand() {
   const s = D.settings;
   return filterBar() + startHint() + `<div class="note">Kaufchancen: US-Preis steigt, Cardmarket hinkt hinterher, Ampel nicht rot und geschätzter Gewinn mind. ${eur(s.min_profit)}.
-    <details><summary>Wie wird geschätzt?</summary>Annahme: Cardmarket zieht auf ${Math.round(s.catchup * 100)} % des US-Preises (umgerechnet, 1 $ = ${D.fx.toFixed(3).replace(".", ",")} €) nach. Davon gehen ${Math.round(s.fee * 100)} % Gebühr und ${eur(s.costs)} Nebenkosten ab, minus dein Einkaufspreis.<br><b>Max. Einkauf</b> = der höchste Cardmarket-Preis, bei dem dir nach dieser Rechnung noch mind. ${eur(s.min_profit)} Gewinn bleiben. Nur eine Schätzung – Grund des Spikes immer prüfen!</details></div>` +
+    <details><summary>Wie wird geschätzt?</summary>Annahme: Cardmarket zieht auf ${Math.round(s.catchup * 100)} % des US-Preises (umgerechnet, 1 $ = ${D.fx.toFixed(3).replace(".", ",")} €) nach. Davon gehen ${Math.round(s.fee * 100)} % Gebühr und der Versand beim Einkauf ab (${eur(ship().low)} unter ${eur(ship().limit)}, ${eur(ship().high)} ab ${eur(ship().limit)}), minus dein Einkaufspreis. Kaufst du mehrere Karten beim selben Verkäufer, teilt sich der Versand – dann ist die Rechnung vorsichtig.<br><b>Max. gesamt</b> = was du insgesamt (Karte + Versand, wie im Warenkorb) höchstens zahlen darfst, damit dir mind. ${eur(s.min_profit)} Gewinn bleiben. Bei mehreren Karten vom selben Verkäufer: die Werte zusammenzählen und mit dem Warenkorb vergleichen. Nur eine Schätzung – Grund des Spikes immer prüfen!</details></div>` +
     list(filt(D.cand), {buy: true, empty: "Heute keine Kandidaten."});
 }
 
@@ -346,7 +358,7 @@ document.addEventListener("input", ev => {
   if (!el.dataset || el.dataset.real === undefined) return;
   const k = el.dataset.real, v = num(el.value);
   if (v == null) delete realP[k]; else realP[k] = v;
-  store.set("realP", realP);
+  store.set("realT", realP);
   document.querySelectorAll(`[data-realout="${CSS.escape(k)}"]`).forEach(o => o.innerHTML = realText(+el.dataset.usd, v));
 });
 
@@ -355,7 +367,7 @@ document.addEventListener("change", async ev => {
   try {
     const j = JSON.parse(await ev.target.files[0].text());
     if (!confirm("Sicherung laden? Aktuelle Liste und Watchlist werden ersetzt.")) return;
-    ledger = j.ledger || []; watch = j.watch || {}; realP = j.realP || realP; store.set("realP", realP);
+    ledger = j.ledger || []; watch = j.watch || {}; realP = j.realP || realP; store.set("realT", realP);
     store.set("ledger", ledger); store.set("watch", watch); render();
   } catch { alert("Datei konnte nicht gelesen werden."); }
 });
