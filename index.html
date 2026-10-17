@@ -54,6 +54,9 @@ nav button.on{color:var(--acc)}
 form{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin:8px 0;display:grid;grid-template-columns:1fr 1fr;gap:8px}
 form label{font-size:12px;color:var(--mute);display:flex;flex-direction:column;gap:3px}
 form .full{grid-column:1/-1}
+.real{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px;flex-wrap:wrap}
+.real input{width:100px;padding:5px 8px}
+.real b{white-space:nowrap}
 input{font:inherit;font-size:16px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);width:100%}
 .btn{font:inherit;border:0;border-radius:10px;padding:10px 14px;background:var(--acc);color:#fff;font-weight:600}
 .btn.alt{background:var(--chip);color:var(--fg)}
@@ -103,10 +106,44 @@ function filterBar() {
     <div class="seg f"><span>Foil:</span>${b("foilf", "all", foilF, "Alle")}${b("foilf", "nonfoil", foilF, "Non-Foil")}${b("foilf", "foil", foilF, "Nur Foil")}</div>`;
 }
 let watch = store.get("watch", {});
+let realP = store.get("realP", {});   // vom User eingetippte echte Cardmarket-Preise
 let ledger = store.get("ledger", []);
 const lastVisit = store.get("lastVisit", null);
 
-function cmSearch(name) { return "https://www.cardmarket.com/en/Magic/Products/Search?searchString=" + encodeURIComponent(name) + "&language=1&minCondition=3"; }
+function cmSearch(name) {
+  // schlichter Suchlink wie bei einer normalen Suche auf Cardmarket (ohne Zusätze, die deren Schutz auslösen können)
+  const q = String(name || "").split(" // ")[0].replace(/['\u2019"]/g, " ").replace(/\s+/g, " ").trim();
+  return "https://www.cardmarket.com/en/Magic/Products/Search?searchString=" + encodeURIComponent(q);
+}
+// Höchster Einkaufspreis auf Cardmarket, bei dem nach Gebühren und Kosten noch das Gewinnziel bleibt
+function maxBuy(usdNow) {
+  if (!D || !usdNow) return null;
+  const s = D.settings;
+  return +(usdNow * D.fx * s.catchup * (1 - s.fee) - s.costs - s.min_profit).toFixed(2);
+}
+function realProfit(usdNow, price) {
+  const m = maxBuy(usdNow);
+  return m == null || price == null ? null : +(m + D.settings.min_profit - price).toFixed(2);
+}
+function realText(usdNow, price) {
+  const g = realProfit(usdNow, price);
+  if (g == null) return usdNow ? "Preis eintippen → Gewinn" : "";
+  return `Gewinn: <b class="${g >= D.settings.min_profit ? "up" : "down"}">${eur(g)}</b>${g < D.settings.min_profit ? (g > 0 ? " (unter Ziel)" : " (Verlust)") : " ✓"}`;
+}
+function realRow(key, usdNow, label) {
+  if (!usdNow) return "";
+  const v = realP[key];
+  return `<div class="real">${label || ""}Echter Preis €
+    <input inputmode="decimal" placeholder="z. B. 8,50" data-real="${esc(key)}" data-usd="${usdNow}" value="${v != null ? String(v).replace(".", ",") : ""}">
+    <span data-realout="${esc(key)}">${realText(usdNow, v)}</span></div>`;
+}
+function maxRow(usdNow, eurNow, label) {
+  const m = maxBuy(usdNow);
+  if (m == null) return "";
+  if (m <= 0) return `<div class="row meta">${label || ""}Max. Einkauf: kein ${eur(D.settings.min_profit)}-Gewinn möglich</div>`;
+  const ok = eurNow != null && eurNow <= m;
+  return `<div class="row">${label || ""}Max. Einkauf: <b class="${eurNow == null ? "" : ok ? "up" : "down"}">${eur(m)}</b>${eurNow != null ? ` <span class="meta">(${ok ? "aktuell darunter ✓" : "aktuell zu teuer"})</span>` : ""}</div>`;
+}
 function newsLink(name) { return "https://www.google.com/search?tbm=nws&q=" + encodeURIComponent('"' + name + '" mtg'); }
 function ytLink(name) { return "https://www.youtube.com/results?search_query=" + encodeURIComponent('"' + name.split(" // ")[0] + '" mtg'); }
 function redditLink(name) { return "https://www.reddit.com/r/mtgfinance/search/?q=" + encodeURIComponent(name); }
@@ -124,6 +161,8 @@ function cardHTML(e, opt = {}) {
     lines += `<div class="row">US ${usd(e.old)} → <b>${usd(e.new)}</b> ${pc(e.ch)}${e.vs != null ? ` <span class="meta">(${Math.round(e.vs * 100)} Pp. über RL-Schnitt)</span>` : ""}</div>`;
     lines += `<div class="row">Cardmarket ${eur(e.eur)} ${e.euch != null ? "(" + pc(e.euch) + ")" : ""}${e.p != null ? ` · Gewinn-Schätzung <b class="${e.p >= 0 ? "up" : "down"}">${eur(e.p)}</b>` : ""}</div>`;
   }
+  const rk = e.id + "|" + (e.f ? 1 : 0);
+  lines += maxRow(e.new, e.eur) + realRow(rk, e.new);
   return `<div class="item">
     ${e.img ? `<img loading="lazy" src="${esc(e.img)}" alt="">` : ""}
     <div class="body">
@@ -133,13 +172,13 @@ function cardHTML(e, opt = {}) {
       ${lines}
       ${e.ytv ? `<div class="vids">${e.ytv.map(v => `<a href="${esc(v.u)}" target="_blank" rel="noopener">▶ ${esc(v.t)} <span>· ${esc(v.ch)} · ${esc(v.d)}</span></a>`).join("")}</div>` : ""}
       <div class="links">
-        <a href="${esc(e.cm || cmSearch(e.n))}" target="_blank" rel="noopener">Cardmarket</a>
+        <a href="${esc(cmSearch(e.n))}" target="_blank" rel="noopener">Cardmarket</a>
         <a href="${esc(e.sf)}" target="_blank" rel="noopener">Scryfall</a>
         ${e.ed ? `<a href="${esc(e.ed)}" target="_blank" rel="noopener">EDHREC</a>` : ""}
         <a href="${newsLink(e.n)}" target="_blank" rel="noopener">Warum? (News)</a>
         <a href="${redditLink(e.n)}" target="_blank" rel="noopener">Reddit</a>
         <a href="${ytLink(e.n)}" target="_blank" rel="noopener">YouTube</a>
-        ${opt.buy ? `<button data-buy="${esc(e.n)}" data-price="${e.eur ?? ""}">+ Kaufliste</button>` : ""}
+        ${opt.buy ? `<button data-buy="${esc(e.n)}" data-key="${esc(rk)}" data-price="${e.eur ?? ""}">+ Kaufliste</button>` : ""}
       </div>
     </div></div>`;
 }
@@ -193,7 +232,7 @@ function renderHype() {
 function renderCand() {
   const s = D.settings;
   return filterBar() + startHint() + `<div class="note">Kaufchancen: US-Preis steigt, Cardmarket hinkt hinterher, Ampel nicht rot und geschätzter Gewinn mind. ${eur(s.min_profit)}.
-    <details><summary>Wie wird geschätzt?</summary>Annahme: Cardmarket zieht auf ${Math.round(s.catchup * 100)} % des US-Preises (umgerechnet, 1 $ = ${D.fx.toFixed(3).replace(".", ",")} €) nach. Davon gehen ${Math.round(s.fee * 100)} % Gebühr und ${eur(s.costs)} Nebenkosten ab, minus dein Einkaufspreis. Nur eine Schätzung – Grund des Spikes immer prüfen!</details></div>` +
+    <details><summary>Wie wird geschätzt?</summary>Annahme: Cardmarket zieht auf ${Math.round(s.catchup * 100)} % des US-Preises (umgerechnet, 1 $ = ${D.fx.toFixed(3).replace(".", ",")} €) nach. Davon gehen ${Math.round(s.fee * 100)} % Gebühr und ${eur(s.costs)} Nebenkosten ab, minus dein Einkaufspreis.<br><b>Max. Einkauf</b> = der höchste Cardmarket-Preis, bei dem dir nach dieser Rechnung noch mind. ${eur(s.min_profit)} Gewinn bleiben. Nur eine Schätzung – Grund des Spikes immer prüfen!</details></div>` +
     list(filt(D.cand), {buy: true, empty: "Heute keine Kandidaten."});
 }
 
@@ -209,6 +248,7 @@ async function renderWatch() {
       <div class="meta">${esc(w.s)} · beobachtet seit ${esc(w.since)}</div>
       ${p ? `<div class="row">US ${usd(p[2])}${p[3] ? " / Foil " + usd(p[3]) : ""} · 7 Tage ${pc(now && wk ? (now - wk) / wk : null)}</div>
       <div class="row">Cardmarket ${eur(p[4])}${p[5] ? " / Foil " + eur(p[5]) : ""}</div>
+      ${maxRow(p[2], p[4], p[3] ? "Non-Foil: " : "")}${realRow(id + "|0", p[2], p[3] ? "Non-Foil: " : "")}${p[3] ? maxRow(p[3], p[5], "Foil: ") + realRow(id + "|1", p[3], "Foil: ") : ""}
       <div class="row meta">Beim Markieren: US ${usd(w.usd)}${w.usd && now ? " → jetzt " + pc((now - w.usd) / w.usd) : ""}</div>` : `<div class="row meta">Keine aktuellen Preise.</div>`}
       <div class="links"><a href="${cmSearch(w.n)}" target="_blank" rel="noopener">Cardmarket</a>
       <a href="https://scryfall.com/search?q=${encodeURIComponent('!"' + w.n + '"')}" target="_blank" rel="noopener">Scryfall</a>
@@ -287,18 +327,27 @@ document.addEventListener("click", ev => {
     }
     store.set("watch", watch); return;
   }
-  if (t.dataset.buy !== undefined) { tab = "ledger"; render({name: t.dataset.buy, price: t.dataset.price}); return; }
+  if (t.dataset.buy !== undefined) { const rp = realP[t.dataset.key]; tab = "ledger"; render({name: t.dataset.buy, price: rp ?? t.dataset.price}); return; }
   if (t.dataset.del !== undefined) { if (confirm("Eintrag löschen?")) { ledger.splice(+t.dataset.del, 1); store.set("ledger", ledger); render(); } return; }
   if (t.dataset.sell !== undefined) {
     const v = num(prompt("Verkaufspreis in €:")); if (v == null) return;
     ledger[+t.dataset.sell].sell = v; store.set("ledger", ledger); render(); return;
   }
   if (t.id === "exp") {
-    const blob = new Blob([JSON.stringify({ledger, watch}, null, 1)], {type: "application/json"});
+    const blob = new Blob([JSON.stringify({ledger, watch, realP}, null, 1)], {type: "application/json"});
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
     a.download = "mtg-sicherung-" + new Date().toISOString().slice(0, 10) + ".json"; a.click(); return;
   }
   if (t.id === "imp") { $("#impf").click(); return; }
+});
+
+document.addEventListener("input", ev => {
+  const el = ev.target;
+  if (!el.dataset || el.dataset.real === undefined) return;
+  const k = el.dataset.real, v = num(el.value);
+  if (v == null) delete realP[k]; else realP[k] = v;
+  store.set("realP", realP);
+  document.querySelectorAll(`[data-realout="${CSS.escape(k)}"]`).forEach(o => o.innerHTML = realText(+el.dataset.usd, v));
 });
 
 document.addEventListener("change", async ev => {
@@ -306,7 +355,7 @@ document.addEventListener("change", async ev => {
   try {
     const j = JSON.parse(await ev.target.files[0].text());
     if (!confirm("Sicherung laden? Aktuelle Liste und Watchlist werden ersetzt.")) return;
-    ledger = j.ledger || []; watch = j.watch || {};
+    ledger = j.ledger || []; watch = j.watch || {}; realP = j.realP || realP; store.set("realP", realP);
     store.set("ledger", ledger); store.set("watch", watch); render();
   } catch { alert("Datei konnte nicht gelesen werden."); }
 });
