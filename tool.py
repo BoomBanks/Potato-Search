@@ -29,7 +29,9 @@ RL_HOLD = 0.90                  # Spike "bestätigt", wenn der Preis am Folgetag
 HISTORY_DAYS = 8                # so viele Tage Preis-Schnappschüsse aufheben
 SPIKELOG_DAYS = 30              # Spike-Verlauf: 30 Tage (keine Lücken, wenn du länger nicht reinschaust)
 CM_FEE = 0.05                   # Cardmarket-Verkaufsgebühr (ca. 5 %)
-COSTS_EUR = 1.50                # Versand/Nebenkosten je Karte (Schätzung)
+SHIP_LOW_EUR = 2.00             # Versand beim Einkauf, Karte unter der Grenze (Durchschnitt)
+SHIP_HIGH_EUR = 15.49           # Versand ab der Grenze (versichert, z. B. aus Deutschland)
+SHIP_LIMIT_EUR = 25.0           # ab diesem Kartenpreis gilt der teure Versand
 MIN_PROFIT_EUR = 5.0            # Kandidat erst ab 5 EUR geschätztem Netto-Gewinn
 CATCHUP = 0.80                  # Annahme: EU-Preis zieht auf 80 % des US-Preises (in EUR) nach
 HYPE_MIN_IMPROVE = 0.20         # EDHREC-Rang mind. 20 % besser als vor ~7 Tagen
@@ -345,7 +347,8 @@ def main():
             light = "r"
         profit = None
         if eur_now and new:
-            profit = round(new * fx * CATCHUP * (1 - CM_FEE) - COSTS_EUR - eur_now, 2)
+            ship = SHIP_HIGH_EUR if eur_now >= SHIP_LIMIT_EUR else SHIP_LOW_EUR
+            profit = round(new * fx * CATCHUP * (1 - CM_FEE) - ship - eur_now, 2)
         e = dict(cards[cid])
         ch = pct(new, old)
         e.update({"id": cid, "f": foil, "old": old, "new": new, "ch": ch,
@@ -483,7 +486,7 @@ def main():
         "updated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="minutes"),
         "today": today, "base1": d1, "base7": d7, "days": len(hist), "fx": fx,
         "settings": {"min_usd": MIN_PRICE_USD, "min_change": MIN_CHANGE, "fee": CM_FEE,
-                     "costs": COSTS_EUR, "min_profit": MIN_PROFIT_EUR, "catchup": CATCHUP,
+                     "ship_low": SHIP_LOW_EUR, "ship_high": SHIP_HIGH_EUR, "ship_limit": SHIP_LIMIT_EUR, "min_profit": MIN_PROFIT_EUR, "catchup": CATCHUP,
                      "rl_min_usd": RL_MIN_PRICE_USD, "rl_min_change": RL_MIN_CHANGE,
                      "rl_min_abs": RL_MIN_ABS_USD, "rl_week_extra": RL_WEEK_EXTRA},
         "rl_avg": rl_avg,
