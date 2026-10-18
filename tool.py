@@ -27,13 +27,16 @@ RL_MIN_ABS_USD = 10.0           # ... oder ab +$10
 RL_WEEK_EXTRA = 0.10            # Reserved List: 7 Tage mind. 10 Prozentpunkte über dem RL-Schnitt
 RL_HOLD = 0.90                  # Spike "bestätigt", wenn der Preis am Folgetag noch mind. 90 % hält
 HISTORY_DAYS = 8                # so viele Tage Preis-Schnappschüsse aufheben
-SPIKELOG_DAYS = 30              # Spike-Verlauf: 30 Tage (keine Lücken, wenn du länger nicht reinschaust)
+SPIKELOG_DAYS = 90              # Spike-Verlauf wird 90 Tage aufbewahrt (für die Ergebnis-Auswertung)
+LOG_SHOW_DAYS = 30              # ... auf der Webseite werden davon die letzten 30 Tage gezeigt
+OUTCOME_DAYS = (7, 14, 30)      # Ergebnis-Archiv: Preise X Tage nach dem Spike festhalten
 CM_FEE = 0.05                   # Cardmarket-Verkaufsgebühr (ca. 5 %)
 SHIP_LOW_EUR = 2.00             # Versand beim Einkauf, Karte unter der Grenze (Durchschnitt)
 SHIP_HIGH_EUR = 15.49           # Versand ab der Grenze (versichert, z. B. aus Deutschland)
 SHIP_LIMIT_EUR = 25.0           # ab diesem Kartenpreis gilt der teure Versand
 MIN_PROFIT_EUR = 5.0            # Kandidat erst ab 5 EUR geschätztem Netto-Gewinn
-CATCHUP = 0.80                  # Annahme: EU-Preis zieht auf 80 % des US-Preises (in EUR) nach
+BUY_MARKUP = 0.15               # Einkauf realistisch: Cardmarket-Trend + 15 % (Englisch/EX+, Verkäuferland, Zoll)
+# Erwarteter Cardmarket-Preis: EU-Preis VOR dem Spike x (1 + US-Anstieg) – jede Karte mit ihrem eigenen EU/US-Verhältnis
 HYPE_MIN_IMPROVE = 0.20         # EDHREC-Rang mind. 20 % besser als vor ~7 Tagen
 HYPE_MIN_PLACES = 200           # ... und mind. 200 Plätze nach vorne
 HYPE_MAX_RANK = 15000           # nur Karten, die schon halbwegs gespielt werden
@@ -297,6 +300,22 @@ def is_spike(new, old, rl):
     return new >= MIN_PRICE_USD and (new - old) / old >= MIN_CHANGE
 
 
+def ship_for(price):
+    return SHIP_HIGH_EUR if price >= SHIP_LIMIT_EUR else SHIP_LOW_EUR
+
+
+def estimate(eur_now, eur_old, usd_new, usd_old, fx):
+    """Gewinn-Schätzung: (erwarteter CM-Preis, Einkaufspreis, Versand, Gewinn) oder Nones."""
+    if not (eur_now and eur_old and usd_new and usd_old):
+        return None, None, None, None
+    target = eur_old * usd_new / usd_old
+    # Deckel: Cardmarket steigt nicht über das US-Niveau (in EUR) – außer es lag schon vorher darüber
+    target = round(min(target, max(eur_old, usd_new * fx)), 2)
+    buy = round(eur_now * (1 + BUY_MARKUP), 2)
+    ship = ship_for(buy)
+    return target, buy, ship, round(target * (1 - CM_FEE) - ship - buy, 2)
+
+
 def median(vals):
     vals = sorted(vals)
     if not vals:
@@ -345,14 +364,12 @@ def main():
             light = "g"
         else:
             light = "r"
-        profit = None
-        if eur_now and new:
-            ship = SHIP_HIGH_EUR if eur_now >= SHIP_LIMIT_EUR else SHIP_LOW_EUR
-            profit = round(new * fx * CATCHUP * (1 - CM_FEE) - ship - eur_now, 2)
+        target, buy, ship, profit = estimate(eur_now, eur_old, new, old, fx)
         e = dict(cards[cid])
         ch = pct(new, old)
         e.update({"id": cid, "f": foil, "old": old, "new": new, "ch": ch,
-                  "eur": eur_now, "euch": eu, "rk": rank_now, "att": att, "l": light, "p": profit})
+                  "eur": eur_now, "euch": eu, "rk": rank_now, "att": att, "l": light, "p": profit,
+                  "tg": target, "bp": buy, "sh": ship})
         if ytn:
             e["yt"] = ytn
         if e["rl"] and light == "r" and (ch or 0) > 0:
@@ -400,7 +417,20 @@ def main():
         week = [e for e in spikes_vs(base7) if not e["rl"]][:300] + rl_week()
         week.sort(key=lambda e: -e["ch"])
 
-    # Spike-Verlauf (30 Tage)
+    # Kandidaten: US steigt, EU hinkt hinterher, Gewinn >= 5 EUR, Ampel nicht rot
+    cand, seen = [], set()
+    for e in today_spikes + week:
+        k = (e["id"], e["f"])
+        if k in seen or e["l"] == "r" or e["p"] is None or e["p"] < MIN_PROFIT_EUR:
+            continue
+        if e["euch"] is not None and e["ch"] and e["euch"] > e["ch"] / 2:
+            continue  # Cardmarket ist schon nachgezogen
+        seen.add(k)
+        e["k"] = 1  # war Kandidat (für das Ergebnis-Archiv)
+        cand.append(e)
+    cand.sort(key=lambda e: -e["p"])
+
+    # Spike-Verlauf (90 Tage gespeichert, 30 Tage angezeigt)
     log = load(f"{STORE}/spikelog.json", [])
     log = [e for e in log if e.get("d") != today]
     for e in today_spikes:
@@ -415,17 +445,40 @@ def main():
                 e["ok"] = 1 if cur >= e["new"] * RL_HOLD else 0
     log.sort(key=lambda e: (e["d"], e["ch"] or 0), reverse=True)
 
-    # Kandidaten: US steigt, EU hinkt hinterher, Gewinn >= 5 EUR, Ampel nicht rot
-    cand, seen = [], set()
-    for e in today_spikes + week:
-        k = (e["id"], e["f"])
-        if k in seen or e["l"] == "r" or e["p"] is None or e["p"] < MIN_PROFIT_EUR:
+    # Ergebnis-Archiv: Preis 7/14/30 Tage nach dem Spike festhalten ("x7" = [US, Cardmarket])
+    tday = dt.date.fromisoformat(today)
+    for e in log:
+        age = (tday - dt.date.fromisoformat(e["d"])).days
+        s = snap.get(e["id"])
+        if not s:
             continue
-        if e["euch"] is not None and e["ch"] and e["euch"] > e["ch"] / 2:
-            continue  # Cardmarket ist schon nachgezogen
-        seen.add(k)
-        cand.append(e)
-    cand.sort(key=lambda e: -e["p"])
+        for n in OUTCOME_DAYS:
+            if age >= n and f"x{n}" not in e:
+                e[f"x{n}"] = [s[1 if e["f"] else 0], s[3 if e["f"] else 2]]
+
+    def result(e, n):
+        """Was wäre nach n Tagen netto geblieben? (Kauf am Spike-Tag zu Trend + Aufschlag, Verkauf zum dann aktuellen Trend)"""
+        x = e.get(f"x{n}")
+        if not x or not x[1] or not e.get("eur"):
+            return None, None
+        buy = e.get("bp") or round(e["eur"] * (1 + BUY_MARKUP), 2)
+        ship = e.get("sh") or ship_for(buy)
+        return round(x[1] / e["eur"] - 1, 3), round(x[1] * (1 - CM_FEE) - ship - buy, 2)
+
+    res = {}
+    for n in OUTCOME_DAYS:
+        all_r = [result(e, n) for e in log]
+        all_r = [r for r in all_r if r[0] is not None]
+        cand_r = [result(e, n) for e in log if e.get("k")]
+        cand_r = [r for r in cand_r if r[0] is not None]
+        res[n] = {
+            "n": len(all_r),
+            "eu": median([r[0] for r in all_r]),
+            "eu10": round(sum(r[0] >= 0.10 for r in all_r) / len(all_r), 3) if all_r else None,
+            "kn": len(cand_r),
+            "kp": median([r[1] for r in cand_r]),
+            "kwin": sum(r[1] >= MIN_PROFIT_EUR for r in cand_r),
+        }
 
     # Hype-Radar
     hype = []
@@ -473,7 +526,9 @@ def main():
             continue
         w = base7.get(cid) or empty
         c = cards[cid]
-        prices[cid] = [c["n"], c["s"], s[0], s[1], s[2], s[3], w[0], w[2], c["rl"]]
+        # [9]/[10] = erwarteter Cardmarket-Preis (Non-Foil/Foil) auf Basis ca. 7 Tage
+        prices[cid] = [c["n"], c["s"], s[0], s[1], s[2], s[3], w[0], w[2], c["rl"],
+                       estimate(s[2], w[2], s[0], w[0], fx)[0], estimate(s[3], w[3], s[1], w[1], fx)[0]]
 
     hist[today] = snap
     for d in sorted(hist)[:-HISTORY_DAYS]:
@@ -486,11 +541,11 @@ def main():
         "updated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="minutes"),
         "today": today, "base1": d1, "base7": d7, "days": len(hist), "fx": fx,
         "settings": {"min_usd": MIN_PRICE_USD, "min_change": MIN_CHANGE, "fee": CM_FEE,
-                     "ship_low": SHIP_LOW_EUR, "ship_high": SHIP_HIGH_EUR, "ship_limit": SHIP_LIMIT_EUR, "min_profit": MIN_PROFIT_EUR, "catchup": CATCHUP,
+                     "ship_low": SHIP_LOW_EUR, "ship_high": SHIP_HIGH_EUR, "ship_limit": SHIP_LIMIT_EUR, "min_profit": MIN_PROFIT_EUR, "markup": BUY_MARKUP,
                      "rl_min_usd": RL_MIN_PRICE_USD, "rl_min_change": RL_MIN_CHANGE,
                      "rl_min_abs": RL_MIN_ABS_USD, "rl_week_extra": RL_WEEK_EXTRA},
-        "rl_avg": rl_avg,
-        "log": log, "week": week, "cand": cand, "hype": hype, "ytl": ytl, "yt_info": yt_info,
+        "rl_avg": rl_avg, "res": res,
+        "log": [e for e in log if e["d"] >= (tday - dt.timedelta(days=LOG_SHOW_DAYS)).isoformat()], "week": week, "cand": cand, "hype": hype, "ytl": ytl, "yt_info": yt_info,
     })
     print(f"Spikes heute: {len(today_spikes)}, 7 Tage: {len(week)}, Kandidaten: {len(cand)}, "
           f"Hype: {len(hype)}, YouTube: {len(ytl)}")
