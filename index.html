@@ -65,6 +65,9 @@ input{font:inherit;font-size:16px;padding:8px;border:1px solid var(--line);borde
 .sum b{display:block;font-size:17px}
 .sum span{font-size:11px;color:var(--mute)}
 details{font-size:13px;color:var(--mute);margin:6px 4px}
+.res{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}
+.res td{border-top:1px solid var(--line);padding:6px 4px;vertical-align:top}
+.res td:first-child{white-space:nowrap;font-weight:600}
 </style>
 </head>
 <body>
@@ -121,39 +124,43 @@ function ship() {
   return {low: s.ship_low ?? 2, high: s.ship_high ?? 15.49, limit: s.ship_limit ?? 25};
 }
 function shipFor(price) { const v = ship(); return price >= v.limit ? v.high : v.low; }
+// tgt = erwarteter Cardmarket-Verkaufspreis (EU-Preis vor dem Spike x US-Anstieg, kommt aus dem Tool)
 // erwarteter Verkaufserlös nach Gebühr (ohne Einkauf und Versand)
-function netSale(usdNow) { const s = D.settings; return usdNow * D.fx * s.catchup * (1 - s.fee); }
+function netSale(tgt) { return tgt * (1 - D.settings.fee); }
 // Max. gesamt = was du insgesamt (Karte + Versand) höchstens zahlen darfst, damit das Gewinnziel bleibt
-function maxTotal(usdNow) { return !D || !usdNow ? null : +(netSale(usdNow) - D.settings.min_profit).toFixed(2); }
-function realProfit(usdNow, total) {
-  if (!D || !usdNow || total == null) return null;
-  return +(netSale(usdNow) - total).toFixed(2);
+function maxTotal(tgt) { return !D || !tgt ? null : +(netSale(tgt) - D.settings.min_profit).toFixed(2); }
+function realProfit(tgt, total) {
+  if (!D || !tgt || total == null) return null;
+  return +(netSale(tgt) - total).toFixed(2);
 }
-function realText(usdNow, price) {
-  const g = realProfit(usdNow, price);
-  if (g == null) return usdNow ? "eintippen → Gewinn" : "";
+function realText(tgt, price) {
+  const g = realProfit(tgt, price);
+  if (g == null) return tgt ? "eintippen → Gewinn" : "";
   return `Gewinn: <b class="${g >= D.settings.min_profit ? "up" : "down"}">${eur(g)}</b>${g < D.settings.min_profit ? (g > 0 ? " (unter Ziel)" : " (Verlust)") : " ✓"}`;
 }
-function realRow(key, usdNow, label) {
-  if (!usdNow) return "";
+function realRow(key, tgt, label) {
+  if (!tgt) return "";
   const v = realP[key];
   return `<div class="real">${label || ""}Warenkorb gesamt €
-    <input inputmode="decimal" placeholder="Karte+Versand" data-real="${esc(key)}" data-usd="${usdNow}" value="${v != null ? String(v).replace(".", ",") : ""}">
-    <span data-realout="${esc(key)}">${realText(usdNow, v)}</span></div>`;
+    <input inputmode="decimal" placeholder="Karte+Versand" data-real="${esc(key)}" data-tgt="${tgt}" value="${v != null ? String(v).replace(".", ",") : ""}">
+    <span data-realout="${esc(key)}">${realText(tgt, v)}</span></div>`;
 }
-function maxRow(usdNow, eurNow, label) {
-  const t = maxTotal(usdNow);
+function maxRow(tgt, eurNow, label) {
+  const t = maxTotal(tgt);
   if (t == null) return "";
-  if (t <= 0) return `<div class="row meta">${label || ""}Max. gesamt: kein ${eur(D.settings.min_profit)}-Gewinn möglich</div>`;
+  const pre = `<div class="row meta">${label || ""}Erwarteter Cardmarket-Preis: ${eur(tgt)}</div>`;
+  if (t <= 0) return pre + `<div class="row meta">${label || ""}Max. gesamt: kein ${eur(D.settings.min_profit)}-Gewinn möglich</div>`;
   const v = ship();
-  const est = eurNow != null ? eurNow + shipFor(eurNow) : null;   // Trend-Preis + geschätzter Versand
+  const mk = D.settings.markup ?? 0.15;
+  const buyEst = eurNow != null ? eurNow * (1 + mk) : null;          // Trend + Sicherheitsaufschlag
+  const est = buyEst != null ? buyEst + shipFor(buyEst) : null;       // + geschätzter Versand
   const ok = est != null && est <= t;
   // Orientierung: wie teuer darf die Karte bei günstigem bzw. teurem Versand sein?
   const lowCard = Math.min(t - v.low, v.limit - 0.01), highCard = t - v.high;
   const hints = [];
   if (lowCard > 0) hints.push(`bei ${eur(v.low)} Versand: Karte bis ${eur(+lowCard.toFixed(2))}`);
   hints.push(highCard >= v.limit ? `bei ${eur(v.high)} Versand: Karte bis ${eur(+highCard.toFixed(2))}` : `teurer Versand (${eur(v.high)}) lohnt nicht`);
-  return `<div class="row">${label || ""}Max. gesamt (Karte + Versand): <b class="${est == null ? "" : ok ? "up" : "down"}">${eur(t)}</b>${est != null ? ` <span class="meta">(${ok ? "Trend-Preis passt ✓" : "Trend-Preis zu teuer"})</span>` : ""}</div>
+  return pre + `<div class="row">${label || ""}Max. gesamt (Karte + Versand): <b class="${est == null ? "" : ok ? "up" : "down"}">${eur(t)}</b>${est != null ? ` <span class="meta">(${ok ? "Trend +" + Math.round(mk * 100) + " % passt ✓" : "Trend +" + Math.round(mk * 100) + " % zu teuer"})</span>` : ""}</div>
     <div class="row meta">${hints.join(" · ")}</div>`;
 }
 function newsLink(name) { return "https://www.google.com/search?tbm=nws&q=" + encodeURIComponent('"' + name + '" mtg'); }
@@ -171,10 +178,12 @@ function cardHTML(e, opt = {}) {
     lines += `<div class="row">US ${usd(e.old)} → ${usd(e.new)} ${pc(e.ch)} · EU ${eur(e.eur)} ${pc(e.euch)}</div>`;
   } else {
     lines += `<div class="row">US ${usd(e.old)} → <b>${usd(e.new)}</b> ${pc(e.ch)}${e.vs != null ? ` <span class="meta">(${Math.round(e.vs * 100)} Pp. über RL-Schnitt)</span>` : ""}</div>`;
-    lines += `<div class="row">Cardmarket ${eur(e.eur)} ${e.euch != null ? "(" + pc(e.euch) + ")" : ""}${e.p != null ? ` · Gewinn-Schätzung <b class="${e.p >= 0 ? "up" : "down"}">${eur(e.p)}</b>` : ""}</div>`;
+    lines += `<div class="row">Cardmarket ${eur(e.eur)} ${e.euch != null ? "(" + pc(e.euch) + ")" : ""}${e.p != null && e.tg != null ? ` · Gewinn-Schätzung <b class="${e.p >= 0 ? "up" : "down"}">${eur(e.p)}</b>` : ""}</div>`;
+    const out = [7, 14, 30].filter(n => e["x" + n] && e["x" + n][1] && e.eur).map(n => `nach ${n} T. CM ${eur(e["x" + n][1])} ${pc(e["x" + n][1] / e.eur - 1)}`);
+    if (out.length) lines += `<div class="row meta">${out.join(" · ")}</div>`;
   }
   const rk = e.id + "|" + (e.f ? 1 : 0);
-  lines += maxRow(e.new, e.eur) + realRow(rk, e.new);
+  lines += maxRow(e.tg, e.eur) + realRow(rk, e.tg);
   return `<div class="item">
     ${e.img ? `<img loading="lazy" src="${esc(e.img)}" alt="">` : ""}
     <div class="body">
@@ -244,8 +253,22 @@ function renderHype() {
 function renderCand() {
   const s = D.settings;
   return filterBar() + startHint() + `<div class="note">Kaufchancen: US-Preis steigt, Cardmarket hinkt hinterher, Ampel nicht rot und geschätzter Gewinn mind. ${eur(s.min_profit)}.
-    <details><summary>Wie wird geschätzt?</summary>Annahme: Cardmarket zieht auf ${Math.round(s.catchup * 100)} % des US-Preises (umgerechnet, 1 $ = ${D.fx.toFixed(3).replace(".", ",")} €) nach. Davon gehen ${Math.round(s.fee * 100)} % Gebühr und der Versand beim Einkauf ab (${eur(ship().low)} unter ${eur(ship().limit)}, ${eur(ship().high)} ab ${eur(ship().limit)}), minus dein Einkaufspreis. Kaufst du mehrere Karten beim selben Verkäufer, teilt sich der Versand – dann ist die Rechnung vorsichtig.<br><b>Max. gesamt</b> = was du insgesamt (Karte + Versand, wie im Warenkorb) höchstens zahlen darfst, damit dir mind. ${eur(s.min_profit)} Gewinn bleiben. Bei mehreren Karten vom selben Verkäufer: die Werte zusammenzählen und mit dem Warenkorb vergleichen. Nur eine Schätzung – Grund des Spikes immer prüfen!</details></div>` +
+    <details><summary>Wie wird geschätzt?</summary>Erwarteter Cardmarket-Preis = Cardmarket-Preis <b>vor</b> dem Spike × US-Anstieg (steigt US um 30 %, rechnet das Tool mit +30 % auf den bisherigen EU-Preis). So zählt jede Karte mit ihrem eigenen EU/US-Abstand. Einkauf = Cardmarket-Trend + ${Math.round((s.markup ?? 0.15) * 100)} % (Englisch ab Excellent, Verkäuferland, Zoll). Vom erwarteten Preis gehen ${Math.round(s.fee * 100)} % Gebühr und der Versand beim Einkauf ab (${eur(ship().low)} unter ${eur(ship().limit)}, ${eur(ship().high)} ab ${eur(ship().limit)}), minus der Einkauf. Kaufst du mehrere Karten beim selben Verkäufer, teilt sich der Versand – dann ist die Rechnung vorsichtig.<br><b>Max. gesamt</b> = was du insgesamt (Karte + Versand, wie im Warenkorb) höchstens zahlen darfst, damit dir mind. ${eur(s.min_profit)} Gewinn bleiben. Bei mehreren Karten vom selben Verkäufer: die Werte zusammenzählen und mit dem Warenkorb vergleichen. Nur eine Schätzung – Grund des Spikes immer prüfen!</details></div>` + resultNote() +
     list(filt(D.cand), {buy: true, empty: "Heute keine Kandidaten."});
+}
+
+// Ergebnis-Archiv: Was ist nach 7/14/30 Tagen wirklich passiert?
+function resultNote() {
+  const r = D.res;
+  if (!r) return "";
+  const rows = [7, 14, 30].map(n => {
+    const x = r[n];
+    if (!x || !x.n) return `<tr><td>${n} Tage</td><td colspan="2" class="meta">noch keine Daten</td></tr>`;
+    const k = x.kn ? `${x.kn} Kandidaten · Gewinn Median <b class="${x.kp >= D.settings.min_profit ? "up" : "down"}">${eur(x.kp)}</b> · ${x.kwin}× ≥ ${eur(D.settings.min_profit)}` : `<span class="meta">noch keine Kandidaten</span>`;
+    return `<tr><td>${n} Tage</td><td>${x.n} Spikes · CM ${pc(x.eu)} (Median) · ${Math.round(x.eu10 * 100)} % mit ≥ +10 %</td><td>${k}</td></tr>`;
+  }).join("");
+  return `<details class="note"><summary>📊 Bilanz: Hat sich das gelohnt?</summary>Was Cardmarket nach dem US-Spike tatsächlich gemacht hat, und was bei den Kandidaten (Kauf zum Trend +${Math.round((D.settings.markup ?? 0.15) * 100)} %, Verkauf zum späteren Trend) netto geblieben wäre.
+    <table class="res">${rows}</table></details>`;
 }
 
 async function renderWatch() {
@@ -260,7 +283,7 @@ async function renderWatch() {
       <div class="meta">${esc(w.s)} · beobachtet seit ${esc(w.since)}</div>
       ${p ? `<div class="row">US ${usd(p[2])}${p[3] ? " / Foil " + usd(p[3]) : ""} · 7 Tage ${pc(now && wk ? (now - wk) / wk : null)}</div>
       <div class="row">Cardmarket ${eur(p[4])}${p[5] ? " / Foil " + eur(p[5]) : ""}</div>
-      ${maxRow(p[2], p[4], p[3] ? "Non-Foil: " : "")}${realRow(id + "|0", p[2], p[3] ? "Non-Foil: " : "")}${p[3] ? maxRow(p[3], p[5], "Foil: ") + realRow(id + "|1", p[3], "Foil: ") : ""}
+      ${maxRow(p[9], p[4], p[3] ? "Non-Foil: " : "")}${realRow(id + "|0", p[9], p[3] ? "Non-Foil: " : "")}${p[3] ? maxRow(p[10], p[5], "Foil: ") + realRow(id + "|1", p[10], "Foil: ") : ""}
       <div class="row meta">Beim Markieren: US ${usd(w.usd)}${w.usd && now ? " → jetzt " + pc((now - w.usd) / w.usd) : ""}</div>` : `<div class="row meta">Keine aktuellen Preise.</div>`}
       <div class="links"><a href="${cmSearch(w.n)}" target="_blank" rel="noopener">Cardmarket</a>
       <a href="https://scryfall.com/search?q=${encodeURIComponent('!"' + w.n + '"')}" target="_blank" rel="noopener">Scryfall</a>
@@ -359,7 +382,7 @@ document.addEventListener("input", ev => {
   const k = el.dataset.real, v = num(el.value);
   if (v == null) delete realP[k]; else realP[k] = v;
   store.set("realT", realP);
-  document.querySelectorAll(`[data-realout="${CSS.escape(k)}"]`).forEach(o => o.innerHTML = realText(+el.dataset.usd, v));
+  document.querySelectorAll(`[data-realout="${CSS.escape(k)}"]`).forEach(o => o.innerHTML = realText(+el.dataset.tgt, v));
 });
 
 document.addEventListener("change", async ev => {
