@@ -78,6 +78,7 @@ details{font-size:13px;color:var(--mute);margin:6px 4px}
 <main id="main"></main>
 <nav id="nav">
   <button data-t="spikes" class="on"><b>📈</b>Spikes</button>
+  <button data-t="cm"><b>🇪🇺</b>CM-Spikes</button>
   <button data-t="hype"><b>📡</b>Hype</button>
   <button data-t="cand"><b>🎯</b>Kandidaten</button>
   <button data-t="watch"><b>⭐</b>Watchlist</button>
@@ -96,7 +97,8 @@ const store = {
 const LIGHT = {g: "Legitim: Aufmerksamkeit (EDHREC/YouTube) oder Cardmarket ziehen mit", y: "Unklar / früh: noch keine Bestätigung", r: "Fragwürdig: Preis springt ohne Rückhalt (oft Ausreißer)"};
 const HYPELIGHT = {g: "Legitim: US-Preis zieht mit", y: "Früh: Aufmerksamkeit steigt, Preis noch ruhig", r: "Fragwürdig: Preis fällt trotz Aufmerksamkeit"};
 
-let D = null, PRICES = null, tab = "spikes", spikeView = "log", hypeView = "edh";
+const CMLIGHT = {g: "Legitim: US zieht mit oder echte Aufmerksamkeit (EDHREC/YouTube)", y: "Unklar: US steigt nur leicht oder kein US-Preis", r: "Nur Cardmarket: US ruhig, kein Hype (oft Ausreißer/Einzelangebot)"};
+let D = null, PRICES = null, tab = "spikes", spikeView = "log", hypeView = "edh", cmView = "log";
 let rlF = store.get("rlF", "all"), rarF = store.get("rarF", "all"), foilF = store.get("foilF", "all");
 const RAR = {C: "Common", U: "Uncommon", R: "Rare", M: "Mythic"};
 function filt(arr) {
@@ -168,10 +170,14 @@ function ytLink(name) { return "https://www.youtube.com/results?search_query=" +
 function redditLink(name) { return "https://www.reddit.com/r/mtgfinance/search/?q=" + encodeURIComponent(name); }
 
 function cardHTML(e, opt = {}) {
-  const lights = opt.hype ? HYPELIGHT : LIGHT;
+  const lights = opt.cm ? CMLIGHT : opt.hype ? HYPELIGHT : LIGHT;
   const starOn = watch[e.id] ? " on" : "";
   let lines = "";
-  if (opt.ytl) {
+  if (opt.cm) {
+    lines += `<div class="row">Cardmarket ${eur(e.old)} → <b>${eur(e.new)}</b> ${pc(e.ch)}</div>`;
+    lines += `<div class="row">US gleicher Zeitraum ${usd(e.uo)} → ${usd(e.un)} ${e.uch != null ? pc(e.uch) : '<span class="meta">(kein US-Preis)</span>'}</div>`;
+    if (e.nw != null && e.d && e.d !== D.today) lines += `<div class="row meta">Cardmarket jetzt ${eur(e.nw)} ${e.new ? pc(e.nw / e.new - 1) : ""} seit dem Spike</div>`;
+  } else if (opt.ytl) {
     lines += `<div class="row">US 7 Tage ${usd(e.old)} → <b>${usd(e.new)}</b> ${pc(e.ch)} · EU ${eur(e.eur)} ${pc(e.euch)}</div>`;
   } else if (opt.hype) {
     lines += `<div class="row">EDHREC-Rang ${e.rk_old} → <b>${e.rk}</b> ${pc(e.att)}</div>`;
@@ -187,9 +193,9 @@ function cardHTML(e, opt = {}) {
   return `<div class="item">
     ${e.img ? `<img loading="lazy" src="${esc(e.img)}" alt="">` : ""}
     <div class="body">
-      <div class="top"><div class="name"><span class="dot l-${e.l}" title="${esc(lights[e.l])}"></span>${esc(e.n)}${e.rl ? '<span class="tag rl">RL</span>' : ""}${e.yt ? `<span class="tag ytt" title="In ${e.yt} YouTube-Video(s) der letzten 7 Tage erwähnt">▶ ${e.yt}</span>` : ""}${e.f ? '<span class="tag">Foil</span>' : ""}${opt.isNew ? '<span class="tag new">neu</span>' : ""}${e.bo ? '<span class="tag warn">möglicher Buyout</span>' : ""}${opt.conf && e.rl ? (e.ok === 1 ? '<span class="tag okt">bestätigt</span>' : e.ok === 0 ? '<span class="tag warn">nicht gehalten</span>' : '<span class="tag">unbestätigt</span>') : ""}</div>
+      <div class="top"><div class="name"><span class="dot l-${e.l}" title="${esc(lights[e.l])}"></span>${esc(e.n)}${e.rl ? '<span class="tag rl">RL</span>' : ""}${e.yt ? `<span class="tag ytt" title="In ${e.yt} YouTube-Video(s) der letzten 7 Tage erwähnt">▶ ${e.yt}</span>` : ""}${e.f ? '<span class="tag">Foil</span>' : ""}${opt.isNew ? '<span class="tag new">neu</span>' : ""}${e.bo ? '<span class="tag warn">möglicher Buyout</span>' : ""}${opt.conf && (e.rl || opt.cm) ? (e.ok === 1 ? '<span class="tag okt">bestätigt</span>' : e.ok === 0 ? '<span class="tag warn">nicht gehalten</span>' : '<span class="tag">unbestätigt</span>') : ""}</div>
       <button class="star${starOn}" data-star="${esc(e.id)}" data-name="${esc(e.n)}" data-set="${esc(e.s)}">★</button></div>
-      <div class="meta">${esc(e.s)} · ${RAR[e.r] || "Sonder"} · ${esc(e.bo ? "Möglicher Buyout: Preis steigt, aber weder Aufmerksamkeit noch Cardmarket ziehen mit" : lights[e.l])}</div>
+      <div class="meta">${esc(e.s)} · ${RAR[e.r] || "Sonder"} · ${esc(e.bo ? (opt.cm ? "Möglicher Buyout: nur Cardmarket springt, US und Aufmerksamkeit bleiben ruhig" : "Möglicher Buyout: Preis steigt, aber weder Aufmerksamkeit noch Cardmarket ziehen mit") : lights[e.l])}</div>
       ${lines}
       ${e.ytv ? `<div class="vids">${e.ytv.map(v => `<a href="${esc(v.u)}" target="_blank" rel="noopener">▶ ${esc(v.t)} <span>· ${esc(v.ch)} · ${esc(v.d)}</span></a>`).join("")}</div>` : ""}
       <div class="links">
@@ -199,7 +205,7 @@ function cardHTML(e, opt = {}) {
         <a href="${newsLink(e.n)}" target="_blank" rel="noopener">Warum? (News)</a>
         <a href="${redditLink(e.n)}" target="_blank" rel="noopener">Reddit</a>
         <a href="${ytLink(e.n)}" target="_blank" rel="noopener">YouTube</a>
-        ${opt.buy ? `<button data-buy="${esc(e.n)}" data-key="${esc(rk)}" data-price="${e.eur ?? ""}">+ Kaufliste</button>` : ""}
+        ${opt.buy ? `<button data-buy="${esc(e.n)}" data-key="${esc(rk)}" data-price="${(opt.cm ? (e.nw ?? e.new) : e.eur) ?? ""}">+ Kaufliste</button>` : ""}
       </div>
     </div></div>`;
 }
@@ -233,6 +239,34 @@ function renderSpikes() {
       if (e.d !== cur) { cur = e.d; h += `<h2>${new Date(cur + "T12:00").toLocaleDateString("de-AT", {weekday: "long", day: "numeric", month: "long"})}</h2>`; }
       h += cardHTML(e, {buy: true, conf: true, isNew: lastVisit && e.d > lastVisit});
     }
+  }
+  return h;
+}
+
+function renderCM() {
+  const st = D.settings;
+  let h = `<div class="seg">
+    <button data-cv="log" class="${cmView === "log" ? "on" : ""}">Letzte 30 Tage</button>
+    <button data-cv="today" class="${cmView === "today" ? "on" : ""}">Heute</button>
+    <button data-cv="week" class="${cmView === "week" ? "on" : ""}">7 Tage</button></div>` + filterBar();
+  if (!D.cmlog) return h + `<div class="empty">CM-Spikes kommen mit dem nächsten täglichen Update.</div>`;
+  h += `<details class="note"><summary>Was zeigt dieser Tab?</summary>Spikes direkt aus den Cardmarket-Preisen (Trend), unabhängig vom US-Markt: ab ${eur(st.cm_min_eur)} und mind. +${Math.round(st.cm_min_change * 100)} %${st.cm_rl_min_eur != null ? `; Reserved List ab ${eur(st.cm_rl_min_eur)} und +${Math.round(st.cm_rl_min_change * 100)} % oder +${eur(st.cm_rl_min_abs)}` : ""}. Daneben siehst du, was der US-Preis im gleichen Zeitraum gemacht hat.<br>
+    <span class="dot l-g"></span>US zieht mit (ab +${Math.round(st.cm_us_confirm * 100)} %) oder echter Hype · <span class="dot l-y"></span>unklar · <span class="dot l-r"></span>nur Cardmarket steigt – oft ein Ausreißer.<br>
+    <b>bestätigt</b> / <b>nicht gehalten</b>: Hat der Cardmarket-Preis am Folgetag noch mind. 90 %? Achtung: Bei einem CM-Spike ist es für günstigen Einkauf meist schon zu spät – der Tab dient vor allem zum Beobachten und Vergleichen mit den US-Spikes.</details>`;
+  if (cmView === "week") {
+    h += `<div class="note">Cardmarket-Preisänderung seit ${esc(D.base7 || "–")} (ca. 7 Tage).</div>`;
+    return h + list(filt(D.cmweek || []), {cm: true, buy: true, empty: "Noch keine 7-Tage-Daten."});
+  }
+  const items = filt(cmView === "today" ? D.cmlog.filter(e => e.d === D.today) : D.cmlog);
+  if (cmView === "log" && lastVisit) {
+    const n = D.cmlog.filter(e => e.d > lastVisit).length;
+    h += `<div class="note">Seit deinem letzten Besuch (${esc(lastVisit)}): <b>${n}</b> neue CM-Spikes.</div>`;
+  }
+  if (!items.length) return h + `<div class="empty">Keine CM-Spikes ${cmView === "today" ? "heute" : "in den letzten 30 Tagen"}.</div>`;
+  let cur = null;
+  for (const e of items) {
+    if (e.d !== cur) { cur = e.d; h += `<h2>${new Date(cur + "T12:00").toLocaleDateString("de-AT", {weekday: "long", day: "numeric", month: "long"})}</h2>`; }
+    h += cardHTML(e, {cm: true, buy: true, conf: true, isNew: lastVisit && e.d > lastVisit});
   }
   return h;
 }
@@ -335,6 +369,7 @@ async function render(prefill) {
   if (!D && tab !== "ledger" && tab !== "watch") { $("#main").innerHTML = `<div class="empty">Daten werden geladen …</div>`; return; }
   const m = $("#main");
   if (tab === "spikes") m.innerHTML = renderSpikes();
+  else if (tab === "cm") m.innerHTML = renderCM();
   else if (tab === "hype") m.innerHTML = renderHype();
   else if (tab === "cand") m.innerHTML = renderCand();
   else if (tab === "watch") { m.innerHTML = `<div class="empty">Lade …</div>`; m.innerHTML = await renderWatch(); }
@@ -346,6 +381,7 @@ document.addEventListener("click", ev => {
   const t = ev.target.closest("button");
   if (!t) return;
   if (t.dataset.t) { tab = t.dataset.t; render(); return; }
+  if (t.dataset.cv) { cmView = t.dataset.cv; render(); return; }
   if (t.dataset.hv) { hypeView = t.dataset.hv; render(); return; }
   if (t.dataset.v) { spikeView = t.dataset.v; render(); return; }
   if (t.dataset.rlf) { rlF = t.dataset.rlf; store.set("rlF", rlF); render(); return; }
@@ -356,8 +392,8 @@ document.addEventListener("click", ev => {
     if (watch[id]) { delete watch[id]; t.classList.remove("on"); if (tab === "watch") render(); }
     else {
       const all = [...(D?.log || []), ...(D?.week || []), ...(D?.hype || []), ...(D?.cand || [])];
-      const e = all.find(x => x.id === id);
-      watch[id] = {n: t.dataset.name, s: t.dataset.set, usd: e ? e.new : null, since: new Date().toISOString().slice(0, 10)};
+      const e = all.find(x => x.id === id), c = [...(D?.cmlog || []), ...(D?.cmweek || [])].find(x => x.id === id);
+      watch[id] = {n: t.dataset.name, s: t.dataset.set, usd: e ? e.new : c ? c.un : null, since: new Date().toISOString().slice(0, 10)};
       t.classList.add("on");
     }
     store.set("watch", watch); return;

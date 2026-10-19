@@ -4,6 +4,7 @@ MTG Spike Tool – alles in einem:
   * Spikes (heute + Verlauf 30 Tage + 7-Tage-Ansicht)
   * Hype-Radar (steigende Aufmerksamkeit laut EDHREC-Rang, Ampel im Abgleich zum US-Preis)
   * Kandidaten (US-Preis steigt, Cardmarket hinkt hinterher, geschätzter Gewinn >= 5 EUR)
+  * CM-Spikes (Spikes direkt aus Cardmarket-Preisen, mit US-Vergleich)
   * Daten für Watchlist (prices.json)
 Läuft 1x täglich über GitHub Actions. Datenquelle: Scryfall (USD = TCGplayer, EUR = Cardmarket).
 """
@@ -40,6 +41,17 @@ BUY_MARKUP = 0.15               # Einkauf realistisch: Cardmarket-Trend + 15 % (
 HYPE_MIN_IMPROVE = 0.20         # EDHREC-Rang mind. 20 % besser als vor ~7 Tagen
 HYPE_MIN_PLACES = 200           # ... und mind. 200 Plätze nach vorne
 HYPE_MAX_RANK = 15000           # nur Karten, die schon halbwegs gespielt werden
+# CM-Spikes: Spikes direkt aus den Cardmarket-Preisen (Trend, EUR)
+CM_MIN_EUR = 3.0                # Cardmarket-Preis nach Spike mind. 3 EUR
+CM_MIN_CHANGE = 0.20            # mind. +20 %
+CM_RL_MIN_EUR = 10.0            # Reserved List: mind. 10 EUR ...
+CM_RL_MIN_CHANGE = 0.10         # ... und +10 % ...
+CM_RL_MIN_ABS = 10.0            # ... oder +10 EUR
+CM_US_CONFIRM = 0.10            # US zieht mit, wenn dort im gleichen Zeitraum mind. +10 %
+CM_US_FLAT = 0.03               # US gilt als "ruhig" bis +3 %
+CM_HOLD = 0.90                  # Spike hält, wenn der CM-Preis am Folgetag noch mind. 90 % hat
+CM_LOG_DAYS = 30                # CM-Spike-Verlauf: 30 Tage
+CM_WEEK_MAX = 300               # 7-Tage-Ansicht: höchstens so viele Karten
 STORE = "store"                 # wird im Branch "daten" aufbewahrt
 SITE = "site"                   # wird als Webseite veröffentlicht
 UA = {"User-Agent": "MTGSpikeTool/2.0", "Accept": "application/json"}
@@ -300,6 +312,14 @@ def is_spike(new, old, rl):
     return new >= MIN_PRICE_USD and (new - old) / old >= MIN_CHANGE
 
 
+def is_cm_spike(new, old, rl):
+    if not new or not old:
+        return False
+    if rl:
+        return new >= CM_RL_MIN_EUR and ((new - old) / old >= CM_RL_MIN_CHANGE or new - old >= CM_RL_MIN_ABS)
+    return new >= CM_MIN_EUR and (new - old) / old >= CM_MIN_CHANGE
+
+
 def ship_for(price):
     return SHIP_HIGH_EUR if price >= SHIP_LIMIT_EUR else SHIP_LOW_EUR
 
@@ -519,6 +539,88 @@ def main():
     ytl.sort(key=lambda e: (-e["yt"], -(e["ch"] or 0)))
     ytl = ytl[:150]
 
+    # ---------------- CM-Spikes: Spikes direkt aus Cardmarket-Daten ----------------
+    snaps = dict(hist)
+    snaps[today] = snap
+    sdates = sorted(snaps)
+
+    def cm_entry(cid, foil, s, b):
+        """Eintrag für einen Cardmarket-Spike: s = neuer, b = alter Schnappschuss derselben Karte."""
+        ui, ei = (1, 3) if foil else (0, 2)
+        c = cards[cid]
+        w = base7.get(cid) or empty
+        rank_now, rank_old = snap[cid][4] if cid in snap else None, w[4]
+        att = pct(rank_old, rank_now) if rank_now and rank_old else None
+        uch = pct(s[ui], b[ui])
+        ytn = len(yt.get(front(c["n"]), []))
+        if uch is not None and uch >= CM_US_CONFIRM:
+            light = "g"   # US zieht im gleichen Zeitraum mit
+        elif ytn or (att or 0) >= 0.10:
+            light = "g"   # echte Aufmerksamkeit (YouTube / EDHREC)
+        elif uch is None:
+            light = "y"   # kein US-Preis zum Vergleich
+        elif uch <= CM_US_FLAT:
+            light = "r"   # nur Cardmarket steigt, US ruhig, kein Hype
+        else:
+            light = "y"
+        e = {k: c[k] for k in ("n", "s", "r", "o", "sf", "rl", "ed", "img")}
+        e.update({"id": cid, "f": foil, "old": b[ei], "new": s[ei], "ch": pct(s[ei], b[ei]),
+                  "uo": b[ui], "un": s[ui], "uch": uch, "att": att, "l": light})
+        if ytn:
+            e["yt"] = ytn
+        if c["rl"] and light == "r":
+            e["bo"] = 1   # RL-Karte springt nur auf Cardmarket -> möglicher Buyout
+        return e
+
+    def cm_spikes(new_snap, old_snap):
+        out = []
+        for cid, s in new_snap.items():
+            b = old_snap.get(cid)
+            if not b or cid not in cards:
+                continue
+            for foil, i in ((False, 2), (True, 3)):
+                if is_cm_spike(s[i], b[i], cards[cid]["rl"]):
+                    out.append(cm_entry(cid, foil, s, b))
+        return sorted(out, key=lambda e: -e["ch"])
+
+    cmlog = load(f"{STORE}/cmlog.json", [])
+    cmlog = [e for e in cmlog if e.get("d") != today]
+    known = {e["d"] for e in cmlog}
+    # Heute + fehlende Tage aus dem gespeicherten Preisverlauf nachtragen (beim ersten Lauf: ganze Woche)
+    for i in range(1, len(sdates)):
+        d = sdates[i]
+        if d in known:
+            continue
+        for e in cm_spikes(snaps[d], snaps[sdates[i - 1]]):
+            e["d"] = d
+            cmlog.append(e)
+    cm_cut = (tday - dt.timedelta(days=CM_LOG_DAYS)).isoformat()
+    cmlog = [e for e in cmlog if e["d"] >= cm_cut]
+    # Hält der Spike? Preis am nächsten verfügbaren Tag (1 = gehalten, 0 = eingebrochen)
+    for e in cmlog:
+        if "ok" in e:
+            continue
+        nxt = next((d for d in sdates if d > e["d"]), None)
+        if nxt:
+            cur = (snaps[nxt].get(e["id"]) or empty)[3 if e["f"] else 2]
+            if cur and e.get("new"):
+                e["ok"] = 1 if cur >= e["new"] * CM_HOLD else 0
+    cmlog.sort(key=lambda e: (e["d"], e["ch"] or 0), reverse=True)
+    for e in cmlog:   # aktueller Cardmarket-Preis (nur für die Anzeige)
+        s = snap.get(e["id"])
+        e["nw"] = s[3 if e["f"] else 2] if s else None
+        if e["id"] in cards:
+            e["cm"] = cards[e["id"]]["cm"]
+    cm_today = [e for e in cmlog if e["d"] == today]
+    cm_week = []
+    if base7:
+        allw = cm_spikes(snap, base7)
+        cm_week = [e for e in allw if not e["rl"]][:CM_WEEK_MAX] + [e for e in allw if e["rl"]]
+        for e in cm_week:
+            e["cm"] = cards[e["id"]]["cm"]
+        cm_week.sort(key=lambda e: -e["ch"])
+    print(f"CM-Spikes heute: {len(cm_today)}, 7 Tage: {len(cm_week)}, Verlauf: {len(cmlog)}")
+
     # Preise für Watchlist
     prices = {}
     for cid, s in snap.items():
@@ -536,6 +638,7 @@ def main():
 
     save(f"{STORE}/history.json.gz", hist, gz=True)
     save(f"{STORE}/spikelog.json", log)
+    save(f"{STORE}/cmlog.json", cmlog)
     save(f"{SITE}/prices.json", prices)
     save(f"{SITE}/data.json", {
         "updated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="minutes"),
@@ -543,7 +646,11 @@ def main():
         "settings": {"min_usd": MIN_PRICE_USD, "min_change": MIN_CHANGE, "fee": CM_FEE,
                      "ship_low": SHIP_LOW_EUR, "ship_high": SHIP_HIGH_EUR, "ship_limit": SHIP_LIMIT_EUR, "min_profit": MIN_PROFIT_EUR, "markup": BUY_MARKUP,
                      "rl_min_usd": RL_MIN_PRICE_USD, "rl_min_change": RL_MIN_CHANGE,
-                     "rl_min_abs": RL_MIN_ABS_USD, "rl_week_extra": RL_WEEK_EXTRA},
+                     "rl_min_abs": RL_MIN_ABS_USD, "rl_week_extra": RL_WEEK_EXTRA,
+                     "cm_min_eur": CM_MIN_EUR, "cm_min_change": CM_MIN_CHANGE, "cm_rl_min_eur": CM_RL_MIN_EUR,
+                     "cm_rl_min_change": CM_RL_MIN_CHANGE, "cm_rl_min_abs": CM_RL_MIN_ABS,
+                     "cm_us_confirm": CM_US_CONFIRM, "cm_us_flat": CM_US_FLAT},
+        "cmlog": cmlog, "cmweek": cm_week,
         "rl_avg": rl_avg, "res": res,
         "log": [e for e in log if e["d"] >= (tday - dt.timedelta(days=LOG_SHOW_DAYS)).isoformat()], "week": week, "cand": cand, "hype": hype, "ytl": ytl, "yt_info": yt_info,
     })
