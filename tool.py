@@ -190,6 +190,7 @@ def parse(path):
                 "o": oid, "sf": c.get("scryfall_uri"), "rl": 1 if rl else 0,
                 "cm": cm_link((c.get("purchase_uris") or {}).get("cardmarket")),
                 "ed": (c.get("related_uris") or {}).get("edhrec"), "img": img,
+                "rd": c.get("released_at"),   # Erscheinungsdatum dieser Druckversion
             }
             by_oracle.setdefault(oid, []).append(c["id"])
     return cards, snap, by_oracle
@@ -468,6 +469,8 @@ def main():
     # Ergebnis-Archiv: Preis 7/14/30 Tage nach dem Spike festhalten ("x7" = [US, Cardmarket])
     tday = dt.date.fromisoformat(today)
     for e in log:
+        if e["id"] in cards:   # Erscheinungsdatum auch bei älteren Einträgen nachtragen
+            e["rd"] = cards[e["id"]].get("rd")
         age = (tday - dt.date.fromisoformat(e["d"])).days
         s = snap.get(e["id"])
         if not s:
@@ -563,7 +566,7 @@ def main():
             light = "r"   # nur Cardmarket steigt, US ruhig, kein Hype
         else:
             light = "y"
-        e = {k: c[k] for k in ("n", "s", "r", "o", "sf", "rl", "ed", "img")}
+        e = {k: c.get(k) for k in ("n", "s", "r", "o", "sf", "rl", "ed", "img", "rd")}
         e.update({"id": cid, "f": foil, "old": b[ei], "new": s[ei], "ch": pct(s[ei], b[ei]),
                   "uo": b[ui], "un": s[ui], "uch": uch, "att": att, "l": light})
         if ytn:
@@ -611,6 +614,7 @@ def main():
         e["nw"] = s[3 if e["f"] else 2] if s else None
         if e["id"] in cards:
             e["cm"] = cards[e["id"]]["cm"]
+            e["rd"] = cards[e["id"]].get("rd")
     cm_today = [e for e in cmlog if e["d"] == today]
     cm_week = []
     if base7:
