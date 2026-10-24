@@ -64,10 +64,8 @@ YT_CHANNELS = [
     "@commandcast",                  # The Command Zone
     "UCTp-iVOtTrKau0skmfZlo5Q",      # Alpha Investments (MTG-Finanz)
     "UC8ZGymAvfP97qJabgqUkz4A",      # Magic: The Gathering (offiziell, Vorschauen/Spoiler)
-    "@EDHREC",
-    "@EDHRECast",
-    "@CardKingdom",
-    "@TCGplayer",
+    "UCApiDwDpn_JpzRGLZKrdr1g",      # EDHRECast (Commander)
+    "UCVmqfvWsKeFaMGY68CbcVVQ",      # TCGplayer
 ]
 YT_DAYS = 7                     # Erwähnungen der letzten 7 Tage zählen
 YT_DESC_CHARS = 400             # nur den Anfang der Videobeschreibung durchsuchen (weniger Fehltreffer)
