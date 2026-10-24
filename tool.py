@@ -3,7 +3,7 @@
 MTG Spike Tool – alles in einem:
   * Spikes (heute + Verlauf 30 Tage + 7-Tage-Ansicht)
   * Hype-Radar (steigende Aufmerksamkeit laut EDHREC-Rang, Ampel im Abgleich zum US-Preis)
-  * Kandidaten (US-Preis steigt, Cardmarket hinkt hinterher, geschätzter Gewinn >= 5 EUR)
+  * Kandidaten (US-Preis steigt, Cardmarket hinkt hinterher, geschätzter Gewinn >= 3 EUR)
   * CM-Spikes (Spikes direkt aus Cardmarket-Preisen, mit US-Vergleich)
   * Daten für Watchlist (prices.json)
 Läuft 1x täglich über GitHub Actions. Datenquelle: Scryfall (USD = TCGplayer, EUR = Cardmarket).
@@ -35,7 +35,7 @@ CM_FEE = 0.05                   # Cardmarket-Verkaufsgebühr (ca. 5 %)
 SHIP_LOW_EUR = 2.00             # Versand beim Einkauf, Karte unter der Grenze (Durchschnitt)
 SHIP_HIGH_EUR = 15.49           # Versand ab der Grenze (versichert, z. B. aus Deutschland)
 SHIP_LIMIT_EUR = 25.0           # ab diesem Kartenpreis gilt der teure Versand
-MIN_PROFIT_EUR = 5.0            # Kandidat erst ab 5 EUR geschätztem Netto-Gewinn
+MIN_PROFIT_EUR = 3.0            # Kandidat erst ab 3 EUR geschätztem Netto-Gewinn
 BUY_MARKUP = 0.15               # Einkauf realistisch: Cardmarket-Trend + 15 % (Englisch/EX+, Verkäuferland, Zoll)
 # Erwarteter Cardmarket-Preis: EU-Preis VOR dem Spike x (1 + US-Anstieg) – jede Karte mit ihrem eigenen EU/US-Verhältnis
 HYPE_MIN_IMPROVE = 0.20         # EDHREC-Rang mind. 20 % besser als vor ~7 Tagen
@@ -61,12 +61,13 @@ UA = {"User-Agent": "MTGSpikeTool/2.0", "Accept": "application/json"}
 YT_CHANNELS = [
     "@MTGGoldfish",
     "@TolarianCommunityCollege",
-    "@AlphaInvestments",
-    "@commandcast",
+    "@commandcast",                  # The Command Zone
+    "UCTp-iVOtTrKau0skmfZlo5Q",      # Alpha Investments (MTG-Finanz)
+    "UC8ZGymAvfP97qJabgqUkz4A",      # Magic: The Gathering (offiziell, Vorschauen/Spoiler)
+    "@EDHREC",
     "@EDHRECast",
-    "@TCGplayer",
     "@CardKingdom",
-    "@MTGSalvation",
+    "@TCGplayer",
 ]
 YT_DAYS = 7                     # Erwähnungen der letzten 7 Tage zählen
 YT_DESC_CHARS = 400             # nur den Anfang der Videobeschreibung durchsuchen (weniger Fehltreffer)
@@ -203,22 +204,34 @@ YT_HDR = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chro
           "Accept-Language": "en-US,en;q=0.8", "Cookie": "CONSENT=YES+1; SOCS=CAI"}
 
 
+YT_ID_PATTERNS = (r"feeds/videos\.xml\?channel_id=(UC[\w-]{22})", r'"externalId":"(UC[\w-]{22})"',
+                  r'<link rel="canonical" href="https://www\.youtube\.com/channel/(UC[\w-]{22})"',
+                  r'itemprop="identifier" content="(UC[\w-]{22})"', r'"browseId":"(UC[\w-]{22})"',
+                  r'"channelId":"(UC[\w-]{22})"')
+
+
 def yt_resolve(handle, cache):
-    """@Handle -> Kanal-ID (UC...). Ergebnis wird gespeichert, damit es nur einmal nachgeschaut wird."""
+    """@Handle -> Kanal-ID (UC...). Ergebnis wird gespeichert, damit es nur einmal nachgeschaut wird.
+    Probiert mehrere Seiten des Kanals, weil YouTube nicht immer dieselbe Seite ausliefert."""
     if handle.startswith("UC"):
         return handle
     if cache.get(handle):
         return cache[handle]
-    try:
-        html = requests.get("https://www.youtube.com/" + handle, headers=YT_HDR, timeout=30).text
-    except Exception:
-        return None
-    for pat in (r"feeds/videos\.xml\?channel_id=(UC[\w-]{22})", r'"externalId":"(UC[\w-]{22})"',
-                r'itemprop="identifier" content="(UC[\w-]{22})"', r'"channelId":"(UC[\w-]{22})"'):
-        m = re.search(pat, html)
-        if m:
-            cache[handle] = m.group(1)
-            return m.group(1)
+    for suffix in ("", "/videos", "/about"):
+        try:
+            r = requests.get("https://www.youtube.com/" + handle + suffix, headers=YT_HDR, timeout=30)
+        except Exception as ex:
+            print(f"YouTube {handle}{suffix}: nicht erreichbar ({ex})")
+            continue
+        if r.status_code == 404:
+            print(f"YouTube {handle}: Kanal existiert nicht (404) – Handle prüfen")
+            return None
+        for pat in YT_ID_PATTERNS:
+            m = re.search(pat, r.text)
+            if m:
+                cache[handle] = m.group(1)
+                return m.group(1)
+        print(f"YouTube {handle}{suffix}: keine Kanal-ID gefunden (Status {r.status_code})")
     return None
 
 
@@ -278,7 +291,9 @@ def youtube(names, today):
                 if v["v"]:
                     videos[v["v"]] = v
             ok.append(h)
-        except Exception:
+        except Exception as ex:
+            print(f"YouTube {h}: Video-Liste nicht ladbar ({ex})")
+            cache.pop(h, None)   # gespeicherte ID evtl. veraltet -> beim nächsten Lauf neu suchen
             bad.append(h)
     cutoff = (dt.date.fromisoformat(today) - dt.timedelta(days=YT_DAYS)).isoformat()
     videos = {k: v for k, v in videos.items() if v.get("d", "") >= cutoff}
@@ -438,7 +453,7 @@ def main():
         week = [e for e in spikes_vs(base7) if not e["rl"]][:300] + rl_week()
         week.sort(key=lambda e: -e["ch"])
 
-    # Kandidaten: US steigt, EU hinkt hinterher, Gewinn >= 5 EUR, Ampel nicht rot
+    # Kandidaten: US steigt, EU hinkt hinterher, Gewinn >= MIN_PROFIT_EUR, Ampel nicht rot
     cand, seen = [], set()
     for e in today_spikes + week:
         k = (e["id"], e["f"])

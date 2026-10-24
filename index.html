@@ -424,7 +424,7 @@ function renderLedger(prefill = {}) {
     h += `<div class="item"><div class="body">
       <div class="top"><div class="name">${esc(x.name)}</div><span class="meta">${esc(x.date)}</span></div>
       <div class="row">Kauf ${eur(x.buy)}${x.costs ? " + " + eur(x.costs) : ""} · ${p == null ? "<b>noch offen</b>" : "Verkauf " + eur(x.sell) + " (−" + x.fee + " %)"}</div>
-      ${p != null ? `<div class="row">Gewinn <b class="${p >= 0 ? "up" : "down"}">${eur(p)}</b>${p >= 0 && p < 5 ? ' <span class="meta">(unter 5 € Ziel)</span>' : ""}</div>` : ""}
+      ${p != null ? `<div class="row">Gewinn <b class="${p >= 0 ? "up" : "down"}">${eur(p)}</b>${D && p >= 0 && p < D.settings.min_profit ? ` <span class="meta">(unter ${eur(D.settings.min_profit)} Ziel)</span>` : ""}</div>` : ""}
       <div class="links">${p == null ? `<button data-sell="${i}">Verkauft eintragen</button>` : ""}<button data-del="${i}">Löschen</button></div>
     </div></div>`;
   });
