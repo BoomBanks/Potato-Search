@@ -27,6 +27,9 @@ RL_MIN_CHANGE = 0.10            # Reserved List: Tages-Spike ab +10 % ...
 RL_MIN_ABS_USD = 10.0           # ... oder ab +$10
 RL_WEEK_EXTRA = 0.10            # Reserved List: 7 Tage mind. 10 Prozentpunkte über dem RL-Schnitt
 RL_HOLD = 0.90                  # Spike "bestätigt", wenn der Preis am Folgetag noch mind. 90 % hält
+HOLD_DAYS = 3                   # Spike "hält", wenn der US-Preis mind. 3 Tage lang ...
+HOLD_MIN = 0.80                 # ... jeden Tag bei mind. 80 % des Spike-Preises bleibt -> Ampel Rot wird Gelb
+HOLD_LOOKBACK = 14              # haltende Spikes bis 14 Tage zurück dürfen in die Kandidaten
 HISTORY_DAYS = 8                # so viele Tage Preis-Schnappschüsse aufheben
 SPIKELOG_DAYS = 90              # Spike-Verlauf wird 90 Tage aufbewahrt (für die Ergebnis-Auswertung)
 LOG_SHOW_DAYS = 30              # ... auf der Webseite werden davon die letzten 30 Tage gezeigt
@@ -452,6 +455,7 @@ def main():
         week.sort(key=lambda e: -e["ch"])
 
     # Kandidaten: US steigt, EU hinkt hinterher, Gewinn >= MIN_PROFIT_EUR, Ampel nicht rot
+    # (haltende Spikes kommen weiter unten dazu, sobald der Spike-Verlauf geladen ist)
     cand, seen = [], set()
     for e in today_spikes + week:
         k = (e["id"], e["f"])
@@ -479,8 +483,53 @@ def main():
                 e["ok"] = 1 if cur >= e["new"] * RL_HOLD else 0
     log.sort(key=lambda e: (e["d"], e["ch"] or 0), reverse=True)
 
-    # Ergebnis-Archiv: Preis 7/14/30 Tage nach dem Spike festhalten ("x7" = [US, Cardmarket])
+    # Spikes, die halten: US-Preis seit dem Spike-Tag jeden Tag bei mind. 80 % des Spike-Preises
+    # -> Ampel von Rot auf Gelb, und sie dürfen in die Kandidaten (Fall Leech Bonder)
     tday = dt.date.fromisoformat(today)
+    held = {}
+    for e in log:
+        age = (tday - dt.date.fromisoformat(e["d"])).days
+        if age < HOLD_DAYS or age > HOLD_LOOKBACK or e["id"] not in snap or not e.get("new"):
+            continue
+        i = 1 if e["f"] else 0
+        after = [h[e["id"]][i] for d, h in sorted(hist.items()) if d > e["d"] and e["id"] in h]
+        after.append(snap[e["id"]][i])
+        if len(after) >= HOLD_DAYS and all((p or 0) >= e["new"] * HOLD_MIN for p in after):
+            e["h"] = age
+            if e["l"] == "r":
+                e["l"], e["l0"] = "y", "r"
+            k = (e["id"], e["f"])
+            if k not in held or held[k]["d"] < e["d"]:
+                held[k] = e
+        elif "h" in e:   # hält nicht mehr -> alte Ampel zurück
+            e.pop("h")
+            if e.get("l0"):
+                e["l"] = e.pop("l0")
+    for e in today_spikes + week:
+        le = held.get((e["id"], e["f"]))
+        if le:
+            e["h"] = le["h"]
+            if e["l"] == "r":
+                e["l"] = "y"
+    for k, le in held.items():
+        if k in seen:
+            continue
+        cid, foil = k
+        b = [None] * 5
+        b[1 if foil else 0], b[3 if foil else 2] = le["old"], le.get("eur")
+        e = make(cid, foil, {cid: b})
+        e.pop("bo", None)
+        e.update({"l": "y" if e["l"] == "r" else e["l"], "h": le["h"], "sd": le["d"]})
+        if e["p"] is None or e["p"] < MIN_PROFIT_EUR:
+            continue
+        if e["euch"] is not None and e["ch"] and e["euch"] > e["ch"] / 2:
+            continue  # Cardmarket ist schon nachgezogen
+        seen.add(k)
+        e["k"] = le["k"] = 1
+        cand.append(e)
+    cand.sort(key=lambda e: -e["p"])
+
+    # Ergebnis-Archiv: Preis 7/14/30 Tage nach dem Spike festhalten ("x7" = [US, Cardmarket])
     for e in log:
         if e["id"] in cards:   # Erscheinungsdatum auch bei älteren Einträgen nachtragen
             e["rd"] = cards[e["id"]].get("rd")
@@ -666,7 +715,8 @@ def main():
                      "rl_min_abs": RL_MIN_ABS_USD, "rl_week_extra": RL_WEEK_EXTRA,
                      "cm_min_eur": CM_MIN_EUR, "cm_min_change": CM_MIN_CHANGE, "cm_rl_min_eur": CM_RL_MIN_EUR,
                      "cm_rl_min_change": CM_RL_MIN_CHANGE, "cm_rl_min_abs": CM_RL_MIN_ABS,
-                     "cm_us_confirm": CM_US_CONFIRM, "cm_us_flat": CM_US_FLAT},
+                     "cm_us_confirm": CM_US_CONFIRM, "cm_us_flat": CM_US_FLAT,
+                     "hold_days": HOLD_DAYS, "hold_min": HOLD_MIN},
         "cmlog": cmlog, "cmweek": cm_week,
         "rl_avg": rl_avg, "res": res,
         "log": [e for e in log if e["d"] >= (tday - dt.timedelta(days=LOG_SHOW_DAYS)).isoformat()], "week": week, "cand": cand, "hype": hype, "ytl": ytl, "yt_info": yt_info,
