@@ -100,22 +100,23 @@ const store = {
   get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d } catch { return d } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} }
 };
-const LIGHT = {g: "Legitim: Aufmerksamkeit (EDHREC/YouTube) oder Cardmarket ziehen mit", y: "Unklar / früh: noch keine Bestätigung", r: "Fragwürdig: Preis springt ohne Rückhalt (oft Ausreißer)"};
+const LIGHT = {g: "Legitim: auf YouTube erwähnt oder Cardmarket zieht mit", y: "Unklar / früh: noch keine Bestätigung", r: "Fragwürdig: Preis springt ohne Rückhalt (oft Ausreißer)"};
 const HYPELIGHT = {g: "Legitim: US-Preis zieht mit", y: "Früh: Aufmerksamkeit steigt, Preis noch ruhig", r: "Fragwürdig: Preis fällt trotz Aufmerksamkeit"};
 
-const CMLIGHT = {g: "Legitim: US zieht mit oder echte Aufmerksamkeit (EDHREC/YouTube)", y: "Unklar: US steigt nur leicht oder kein US-Preis", r: "Nur Cardmarket: US ruhig, kein Hype (oft Ausreißer/Einzelangebot)"};
+const CMLIGHT = {g: "Legitim: US zieht mit oder auf YouTube erwähnt", y: "Unklar: US steigt nur leicht oder kein US-Preis", r: "Nur Cardmarket: US ruhig, kein Hype (oft Ausreißer/Einzelangebot)"};
 let D = null, PRICES = null, tab = "spikes", spikeView = "log", hypeView = "edh", cmView = "log";
-let rlF = store.get("rlF", "all"), rarF = store.get("rarF", "all"), foilF = store.get("foilF", "all");
+let stF = store.get("stF", "all"), rlF = store.get("rlF", "all"), rarF = store.get("rarF", "all"), foilF = store.get("foilF", "all");
 let sortM = store.get("sortM", "std"), sortD = store.get("sortD", -1);   // sortD: -1 = absteigend, 1 = aufsteigend
 let q = "", pMin = store.get("pMin", null), pMax = store.get("pMax", null), fOpen = store.get("fOpen", false);
 const RAR = {C: "Common", U: "Uncommon", R: "Rare", M: "Mythic"};
 const LRANK = {g: 0, y: 1, r: 2};
+const isStaple = e => e.rk != null && e.rk <= (D?.settings?.staple ?? 2000);
 const front = n => String(n || "").split(" // ")[0].trim().toLowerCase();
 // Cardmarket-Preis eines Eintrags in € (CM-Spikes haben "un" = US-Preis und als EU-Preis "nw"/"new")
 const priceOf = e => "un" in e ? (e.nw ?? e.new) : e.eur;
 function match(e) {
   const pr = priceOf(e);
-  return (rlF === "all" || (rlF === "only" ? e.rl : !e.rl)) && (rarF === "all" || e.r === rarF) && (foilF === "all" || (foilF === "foil" ? e.f : !e.f))
+  return (stF === "all" || (stF === "only" ? isStaple(e) : !isStaple(e))) && (rlF === "all" || (rlF === "only" ? e.rl : !e.rl)) && (rarF === "all" || e.r === rarF) && (foilF === "all" || (foilF === "foil" ? e.f : !e.f))
     && (!q || String(e.n || "").toLowerCase().includes(q))
     && (pMin == null || (pr != null && pr >= pMin)) && (pMax == null || (pr != null && pr <= pMax));
 }
@@ -152,10 +153,11 @@ function hitsNote() {
 }
 function filterBar(cm) {
   const b = (k, v, cur, label) => `<button data-${k}="${v}" class="${cur === v ? "on" : ""}">${label}</button>`;
-  const n = [rlF !== "all", rarF !== "all", foilF !== "all", pMin != null || pMax != null].filter(Boolean).length;
+  const n = [stF !== "all", rlF !== "all", rarF !== "all", foilF !== "all", pMin != null || pMax != null].filter(Boolean).length;
   const pv = v => v != null ? String(v).replace(".", ",") : "";
   return `<div class="tools"><input id="q" type="search" enterkeyhint="search" autocomplete="off" placeholder="🔍 Karte suchen (alle Tabs)" value="${esc(q)}"></div>` + hitsNote() + sortBar(cm) +
     `<details class="flt"${fOpen ? " open" : ""}><summary>Filter${n ? ` (${n} aktiv)` : ""}</summary>
+    <div class="seg f"><span>Staples (EDHREC Top ${(D?.settings?.staple ?? 2000).toLocaleString("de-DE")}):</span>${b("stf", "all", stF, "Alle")}${b("stf", "only", stF, "Nur Staples")}${b("stf", "hide", stF, "Staples ausblenden")}</div>
     <div class="seg f"><span>Reserved List:</span>${b("rlf", "all", rlF, "Alle")}${b("rlf", "only", rlF, "Nur RL")}${b("rlf", "hide", rlF, "RL ausblenden")}</div>
     <div class="seg f"><span>Seltenheit:</span>${b("rarf", "all", rarF, "Alle")}${b("rarf", "U", rarF, "Uncommon")}${b("rarf", "R", rarF, "Rare")}${b("rarf", "M", rarF, "Mythic")}</div>
     <div class="seg f"><span>Foil:</span>${b("foilf", "all", foilF, "Alle")}${b("foilf", "nonfoil", foilF, "Non-Foil")}${b("foilf", "foil", foilF, "Nur Foil")}</div>
@@ -170,7 +172,7 @@ function buildSignals() {
   const add = (arr, s) => (arr || []).forEach(e => { const k = front(e.n); (SIG[k] ??= new Set()).add(s); });
   const us = [...(D.log || []).filter(e => e.d >= cut), ...(D.week || [])];
   const cm = [...(D.cmlog || []).filter(e => e.d >= cut), ...(D.cmweek || [])];
-  add(us, "US-Spike"); add(cm, "CM-Spike"); add(D.hype, "EDHREC-Hype");
+  add(us, "US-Spike"); add(cm, "CM-Spike");   // EDHREC-Hype zählt nicht mehr als Signal
   add([...(D.ytl || []), ...[...us, ...cm, ...(D.hype || [])].filter(e => e.yt)], "YouTube");
 }
 // Steht die Karte (irgendeine Version) schon auf der Watchlist oder in den Käufen?
@@ -267,7 +269,7 @@ function cardHTML(e, opt = {}) {
   return `<div class="item">
     ${e.img ? `<img loading="lazy" src="${esc(e.img)}" alt="">` : ""}
     <div class="body">
-      <div class="top"><div class="name"><span class="dot l-${e.l}" title="${esc(lights[e.l])}"></span>${esc(e.n)}${e.rl ? '<span class="tag rl">RL</span>' : ""}${e.yt ? `<span class="tag ytt" title="In ${e.yt} YouTube-Video(s) der letzten 7 Tage erwähnt">▶ ${e.yt}</span>` : ""}${e.f ? '<span class="tag">Foil</span>' : ""}${opt.isNew ? '<span class="tag new">neu</span>' : ""}${(SIG[front(e.n)]?.size || 0) >= 2 ? `<span class="tag sig">${SIG[front(e.n)].size} Signale</span>` : ""}${ownTags(e)}${e.bo ? '<span class="tag warn">möglicher Buyout</span>' : ""}${e.lag && !opt.cm && !opt.hype ? '<span class="tag warn" title="US-Preis ist ein Vielfaches der Cardmarket-Verkäufe – Angebote prüfen">CM hinkt</span>' : ""}${e.cz && !opt.cm && !opt.hype ? '<span class="tag" title="Cardmarket-Verkäufe der letzten 7 Tage steigen schon">CM zieht nach</span>' : ""}${e.h ? `<span class="tag okt" title="US-Preis liegt seit dem Spike jeden Tag bei mind. ${Math.round((D.settings.hold_min ?? 0.8) * 100)} % des Spike-Preises">hält ${e.h} Tage</span>` : ""}${opt.conf && (e.rl || opt.cm) ? (e.ok === 1 ? '<span class="tag okt">bestätigt</span>' : e.ok === 0 ? '<span class="tag warn">nicht gehalten</span>' : '<span class="tag">unbestätigt</span>') : ""}</div>
+      <div class="top"><div class="name"><span class="dot l-${e.l}" title="${esc(lights[e.l])}"></span>${esc(e.n)}${e.rl ? '<span class="tag rl">RL</span>' : ""}${isStaple(e) ? `<span class="tag" title="Viel gespielt: Platz ${e.rk} auf EDHREC (Commander). Leichter weiterzuverkaufen – sagt aber nicht voraus, ob Cardmarket nachzieht.">Staple #${e.rk}</span>` : ""}${e.yt ? `<span class="tag ytt" title="In ${e.yt} YouTube-Video(s) der letzten 7 Tage erwähnt">▶ ${e.yt}</span>` : ""}${e.f ? '<span class="tag">Foil</span>' : ""}${opt.isNew ? '<span class="tag new">neu</span>' : ""}${(SIG[front(e.n)]?.size || 0) >= 2 ? `<span class="tag sig">${SIG[front(e.n)].size} Signale</span>` : ""}${ownTags(e)}${e.bo ? '<span class="tag warn">möglicher Buyout</span>' : ""}${e.lag && !opt.cm && !opt.hype ? '<span class="tag warn" title="US-Preis ist ein Vielfaches der Cardmarket-Verkäufe – Angebote prüfen">CM hinkt</span>' : ""}${e.cz && !opt.cm && !opt.hype ? '<span class="tag" title="Cardmarket-Verkäufe der letzten 7 Tage steigen schon">CM zieht nach</span>' : ""}${e.h ? `<span class="tag okt" title="US-Preis liegt seit dem Spike jeden Tag bei mind. ${Math.round((D.settings.hold_min ?? 0.8) * 100)} % des Spike-Preises">hält ${e.h} Tage</span>` : ""}${opt.conf && (e.rl || opt.cm) ? (e.ok === 1 ? '<span class="tag okt">bestätigt</span>' : e.ok === 0 ? '<span class="tag warn">nicht gehalten</span>' : '<span class="tag">unbestätigt</span>') : ""}</div>
       <button class="star${starOn}" data-star="${esc(e.id)}" data-name="${esc(e.n)}" data-set="${esc(e.s)}">★</button></div>
       <div class="meta">${esc(e.s)} · ${RAR[e.r] || "Sonder"} · ${esc(e.bo ? (opt.cm ? "Möglicher Buyout: nur Cardmarket springt, US und Aufmerksamkeit bleiben ruhig" : "Möglicher Buyout: Preis steigt, aber weder Aufmerksamkeit noch Cardmarket ziehen mit") : e.h && e.l === "y" && !opt.cm && !opt.hype ? (e.sd ? `US-Preis hält seit ${e.h} Tagen (Spike am ${e.sd.split("-").reverse().join(".")}), Cardmarket noch nicht nachgezogen – Angebote prüfen` : `US-Preis hält seit ${e.h} Tagen`) : lights[e.l])}</div>
       ${(SIG[front(e.n)]?.size || 0) >= 2 ? `<div class="row meta">Signale: ${[...SIG[front(e.n)]].join(" · ")}</div>` : ""}
@@ -354,7 +356,7 @@ function renderHype() {
       <details><summary>Durchsuchte Kanäle</summary>${i.ok.length} Kanäle, ${i.videos} Videos.${i.bad.length ? `<br>Nicht erreichbar: ${esc(i.bad.join(", "))}` : ""}<br>Achtung: Wird eine Karte nur in einer langen Liste erwähnt, kann der Treffer zufällig sein – Video kurz ansehen.</details></div>` +
       list(filt(D.ytl || []), {ytl: true, buy: true, empty: D.ytl ? "Keine Karten in aktuellen Videos gefunden." : "YouTube-Daten kommen mit dem nächsten Update."});
   }
-  return seg + filterBar() + startHint() + `<div class="note">Karten, deren Beliebtheit auf EDHREC (Commander) in ca. 7 Tagen deutlich gestiegen ist.<br>
+  return seg + filterBar() + startHint() + `<div class="note">Karten, deren Beliebtheit auf EDHREC (Commander) in ca. 7 Tagen deutlich gestiegen ist. Nur zur Info – zählt nicht mehr für die Ampel, weil sich das Signal in der Auswertung als schwach gezeigt hat.<br>
     <span class="dot l-g"></span>US-Preis zieht mit · <span class="dot l-y"></span>früh, Preis noch ruhig · <span class="dot l-r"></span>Preis fällt trotzdem</div>` +
     list(filt(D.hype), {hype: true, buy: true, empty: "Noch keine Hype-Signale."});
 }
@@ -459,6 +461,7 @@ document.addEventListener("click", ev => {
   if (t.dataset.cv) { cmView = t.dataset.cv; render(); return; }
   if (t.dataset.hv) { hypeView = t.dataset.hv; render(); return; }
   if (t.dataset.v) { spikeView = t.dataset.v; render(); return; }
+  if (t.dataset.stf) { stF = t.dataset.stf; store.set("stF", stF); render(); return; }
   if (t.dataset.rlf) { rlF = t.dataset.rlf; store.set("rlF", rlF); render(); return; }
   if (t.dataset.foilf) { foilF = t.dataset.foilf; store.set("foilF", foilF); render(); return; }
   if (t.dataset.sort) {

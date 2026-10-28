@@ -44,6 +44,7 @@ SHIP_LIMIT_EUR = 25.0           # ab diesem Kartenpreis gilt der teure Versand
 MIN_PROFIT_EUR = 3.0            # Kandidat erst ab 3 EUR geschätztem Netto-Gewinn
 BUY_MARKUP = 0.15               # Einkauf realistisch: Cardmarket-Trend + 15 % (Englisch/EX+, Verkäuferland, Zoll)
 # Erwarteter Cardmarket-Preis: EU-Preis VOR dem Spike x (1 + US-Anstieg) – jede Karte mit ihrem eigenen EU/US-Verhältnis
+STAPLE_RANK = 2000              # "Staple": EDHREC-Rang bis 2.000 (nur Abzeichen/Filter, zählt nicht für die Ampel)
 HYPE_MIN_IMPROVE = 0.20         # EDHREC-Rang mind. 20 % besser als vor ~7 Tagen
 HYPE_MIN_PLACES = 200           # ... und mind. 200 Plätze nach vorne
 HYPE_MAX_RANK = 15000           # nur Karten, die schon halbwegs gespielt werden
@@ -427,12 +428,13 @@ def main():
         att = pct(rank_old, rank_now) if rank_now and rank_old else None  # >0 = Aufmerksamkeit steigt
         eu = pct(eur_now, eur_old)
         ytn = len(yt.get(front(cards[cid]["n"]), []))
+        # EDHREC-Trend zählt nicht mehr für die Ampel (Auswertung Okt. 2026: schwaches Signal)
         if ytn:
             light = "g"   # auf YouTube erwähnt = echte Aufmerksamkeit
-        elif att is None and eu is None:
+        elif eu is None:
             light = "y"
-        elif (att or 0) >= 0.10 or (eu or 0) >= 0.10:
-            light = "g"
+        elif eu >= 0.10:
+            light = "g"   # Cardmarket zieht mit
         else:
             light = "r"
         sales = cm_sales(guide.get(cards[cid].get("cmid")), foil, bool(s[1]))
@@ -666,8 +668,8 @@ def main():
         ytn = len(yt.get(front(c["n"]), []))
         if uch is not None and uch >= CM_US_CONFIRM:
             light = "g"   # US zieht im gleichen Zeitraum mit
-        elif ytn or (att or 0) >= 0.10:
-            light = "g"   # echte Aufmerksamkeit (YouTube / EDHREC)
+        elif ytn:
+            light = "g"   # echte Aufmerksamkeit (YouTube)
         elif uch is None:
             light = "y"   # kein US-Preis zum Vergleich
         elif uch <= CM_US_FLAT:
@@ -676,7 +678,7 @@ def main():
             light = "y"
         e = {k: c.get(k) for k in ("n", "s", "r", "o", "sf", "rl", "ed", "img", "rd")}
         e.update({"id": cid, "f": foil, "old": b[ei], "new": s[ei], "ch": pct(s[ei], b[ei]),
-                  "uo": b[ui], "un": s[ui], "uch": uch, "att": att, "l": light})
+                  "uo": b[ui], "un": s[ui], "uch": uch, "att": att, "rk": rank_now, "l": light})
         if ytn:
             e["yt"] = ytn
         if c["rl"] and light == "r":
@@ -763,7 +765,7 @@ def main():
                      "cm_rl_min_change": CM_RL_MIN_CHANGE, "cm_rl_min_abs": CM_RL_MIN_ABS,
                      "cm_us_confirm": CM_US_CONFIRM, "cm_us_flat": CM_US_FLAT,
                      "hold_days": HOLD_DAYS, "hold_min": HOLD_MIN,
-                     "cm_lag": CM_LAG_FACTOR, "cm_follow": CM_FOLLOW, "cm_guide": bool(guide)},
+                     "cm_lag": CM_LAG_FACTOR, "cm_follow": CM_FOLLOW, "cm_guide": bool(guide), "staple": STAPLE_RANK},
         "cmlog": cmlog, "cmweek": cm_week,
         "rl_avg": rl_avg, "res": res,
         "log": [e for e in log if e["d"] >= (tday - dt.timedelta(days=LOG_SHOW_DAYS)).isoformat()], "week": week, "cand": cand, "hype": hype, "ytl": ytl, "yt_info": yt_info,
