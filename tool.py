@@ -6,7 +6,8 @@ MTG Spike Tool – alles in einem:
   * Kandidaten (US-Preis steigt, Cardmarket hinkt hinterher, geschätzter Gewinn >= 3 EUR)
   * CM-Spikes (Spikes direkt aus Cardmarket-Preisen, mit US-Vergleich)
   * Daten für Watchlist (prices.json)
-Läuft 1x täglich über GitHub Actions. Datenquelle: Scryfall (USD = TCGplayer, EUR = Cardmarket).
+Läuft 1x täglich über GitHub Actions. Datenquelle: Scryfall (USD = TCGplayer, EUR = Cardmarket-Trend),
+dazu der offizielle Cardmarket-Preis-Führer (Durchschnitt der Verkäufe gestern / 7 / 30 Tage).
 """
 import datetime as dt
 import gzip
@@ -29,6 +30,8 @@ RL_WEEK_EXTRA = 0.10            # Reserved List: 7 Tage mind. 10 Prozentpunkte �
 RL_HOLD = 0.90                  # Spike "bestätigt", wenn der Preis am Folgetag noch mind. 90 % hält
 HOLD_DAYS = 3                   # Spike "hält", wenn der US-Preis mind. 3 Tage lang ...
 HOLD_MIN = 0.80                 # ... jeden Tag bei mind. 80 % des Spike-Preises bleibt -> Ampel Rot wird Gelb
+CM_LAG_FACTOR = 3.0             # "CM hinkt stark hinterher": US-Preis (in EUR) mind. 3x so hoch wie die CM-Verkäufe
+CM_FOLLOW = 0.20                # "CM zieht schon nach": Verkäufe 7 Tage mind. 20 % über dem 30-Tage-Schnitt
 HOLD_LOOKBACK = 14              # haltende Spikes bis 14 Tage zurück dürfen in die Kandidaten
 HISTORY_DAYS = 8                # so viele Tage Preis-Schnappschüsse aufheben
 SPIKELOG_DAYS = 90              # Spike-Verlauf wird 90 Tage aufbewahrt (für die Ergebnis-Auswertung)
@@ -146,6 +149,33 @@ def download_bulk(path="cards.json"):
     return path
 
 
+def cm_guide():
+    """Offizieller Cardmarket-Preis-Führer (täglich neu). Fehler -> leer, dann nur Scryfall."""
+    try:
+        if os.environ.get("CM_GUIDE_FILE"):   # nur zum Testen: Datei statt Download
+            pg = load(os.environ["CM_GUIDE_FILE"], {})
+            return {x["idProduct"]: x for x in pg.get("priceGuides", [])}
+        r = requests.get("https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_1.json",
+                         headers=UA, timeout=300)
+        r.raise_for_status()
+        pg = r.json()
+        g = {x["idProduct"]: x for x in pg.get("priceGuides", []) if x.get("idProduct")}
+        print(f"Cardmarket-Preis-Führer: {len(g)} Einträge, Stand {pg.get('createdAt')}")
+        return g
+    except Exception as ex:
+        print("Cardmarket-Preis-Führer nicht geladen (nur Scryfall):", ex)
+        return {}
+
+
+def cm_sales(g, foil, has_foil_us):
+    """Durchschnitt der Verkäufe [gestern, 7 Tage, 30 Tage] für Normal oder Foil – oder None."""
+    if not g or (foil and not has_foil_us):
+        return None   # Foil-Werte nur, wenn es die Karte wirklich als Foil gibt
+    sfx = "-foil" if foil else ""
+    vals = [num(g.get(k + sfx)) for k in ("avg1", "avg7", "avg30")]
+    return vals if any(vals) else None
+
+
 def cm_link(url):
     """Cardmarket-Link mit Filter: Englisch, Zustand ab Excellent."""
     if not url:
@@ -193,6 +223,7 @@ def parse(path):
                 "cm": cm_link((c.get("purchase_uris") or {}).get("cardmarket")),
                 "ed": (c.get("related_uris") or {}).get("edhrec"), "img": img,
                 "rd": c.get("released_at"),   # Erscheinungsdatum dieser Druckversion
+                "cmid": c.get("cardmarket_id"),
             }
             by_oracle.setdefault(oid, []).append(c["id"])
     return cards, snap, by_oracle
@@ -341,8 +372,10 @@ def ship_for(price):
     return SHIP_HIGH_EUR if price >= SHIP_LIMIT_EUR else SHIP_LOW_EUR
 
 
-def estimate(eur_now, eur_old, usd_new, usd_old, fx):
-    """Gewinn-Schätzung: (erwarteter CM-Preis, Einkaufspreis, Versand, Gewinn) oder Nones."""
+def estimate(eur_now, eur_old, usd_new, usd_old, fx, normal=None):
+    """Gewinn-Schätzung: (erwarteter CM-Preis, Einkaufspreis, Versand, Gewinn) oder Nones.
+    normal = Cardmarket-Normalpreis (Verkäufe 30 Tage Ø); fehlt er, zählt der Trend vor dem Spike."""
+    eur_old = normal or eur_old
     if not (eur_now and eur_old and usd_new and usd_old):
         return None, None, None, None
     target = eur_old * usd_new / usd_old
@@ -368,6 +401,7 @@ def main():
     cards, snap, by_oracle = parse(path)
     print(f"{len(snap)} Karten eingelesen, Kurs 1 USD = {fx} EUR")
 
+    guide = cm_guide()
     hist = load(f"{STORE}/history.json.gz", {})
     hist.pop(today, None)
     d1, base1 = pick_base(hist, today, 1)
@@ -401,14 +435,23 @@ def main():
             light = "g"
         else:
             light = "r"
-        target, buy, ship, profit = estimate(eur_now, eur_old, new, old, fx)
+        sales = cm_sales(guide.get(cards[cid].get("cmid")), foil, bool(s[1]))
+        target, buy, ship, profit = estimate(eur_now, eur_old, new, old, fx, sales[2] if sales else None)
         e = dict(cards[cid])
+        e.pop("cmid", None)
         ch = pct(new, old)
         e.update({"id": cid, "f": foil, "old": old, "new": new, "ch": ch,
                   "eur": eur_now, "euch": eu, "rk": rank_now, "att": att, "l": light, "p": profit,
                   "tg": target, "bp": buy, "sh": ship})
         if ytn:
             e["yt"] = ytn
+        if sales:
+            e["cs"] = sales   # CM-Verkäufe Ø [gestern, 7 Tage, 30 Tage]
+            if sales[1] and sales[2] and sales[1] >= sales[2] * (1 + CM_FOLLOW):
+                e["cz"] = 1   # Cardmarket zieht schon nach
+        ref = (sales and (sales[1] or sales[2])) or eur_now
+        if new and ref and new * fx >= ref * CM_LAG_FACTOR:
+            e["lag"] = round(new * fx / ref, 1)   # CM hinkt stark hinterher (US-Preis ist X-mal so hoch)
         if e["rl"] and light == "r" and (ch or 0) > 0:
             e["bo"] = 1  # Preis steigt ohne Aufmerksamkeit und ohne Cardmarket -> möglicher Buyout
         return e
@@ -529,7 +572,7 @@ def main():
         cand.append(e)
     cand.sort(key=lambda e: -e["p"])
 
-    # Ergebnis-Archiv: Preis 7/14/30 Tage nach dem Spike festhalten ("x7" = [US, Cardmarket])
+    # Ergebnis-Archiv: Preis 7/14/30 Tage nach dem Spike festhalten ("x7" = [US, CM-Trend, CM-Verkäufe 7 Tage Ø])
     for e in log:
         if e["id"] in cards:   # Erscheinungsdatum auch bei älteren Einträgen nachtragen
             e["rd"] = cards[e["id"]].get("rd")
@@ -539,16 +582,19 @@ def main():
             continue
         for n in OUTCOME_DAYS:
             if age >= n and f"x{n}" not in e:
-                e[f"x{n}"] = [s[1 if e["f"] else 0], s[3 if e["f"] else 2]]
+                cs = cm_sales(guide.get((cards.get(e["id"]) or {}).get("cmid")), e["f"], bool(s[1]))
+                e[f"x{n}"] = [s[1 if e["f"] else 0], s[3 if e["f"] else 2], cs[1] if cs else None]
 
     def result(e, n):
-        """Was wäre nach n Tagen netto geblieben? (Kauf am Spike-Tag zu Trend + Aufschlag, Verkauf zum dann aktuellen Trend)"""
+        """Was wäre nach n Tagen netto geblieben? (Kauf am Spike-Tag zu Trend + Aufschlag,
+        Verkauf zum Ø der CM-Verkäufe der letzten 7 Tage – fehlt der, zum dann aktuellen Trend)"""
         x = e.get(f"x{n}")
         if not x or not x[1] or not e.get("eur"):
             return None, None
         buy = e.get("bp") or round(e["eur"] * (1 + BUY_MARKUP), 2)
         ship = e.get("sh") or ship_for(buy)
-        return round(x[1] / e["eur"] - 1, 3), round(x[1] * (1 - CM_FEE) - ship - buy, 2)
+        sell = (x[2] if len(x) > 2 else None) or x[1]
+        return round(x[1] / e["eur"] - 1, 3), round(sell * (1 - CM_FEE) - ship - buy, 2)
 
     res = {}
     for n in OUTCOME_DAYS:
@@ -716,7 +762,8 @@ def main():
                      "cm_min_eur": CM_MIN_EUR, "cm_min_change": CM_MIN_CHANGE, "cm_rl_min_eur": CM_RL_MIN_EUR,
                      "cm_rl_min_change": CM_RL_MIN_CHANGE, "cm_rl_min_abs": CM_RL_MIN_ABS,
                      "cm_us_confirm": CM_US_CONFIRM, "cm_us_flat": CM_US_FLAT,
-                     "hold_days": HOLD_DAYS, "hold_min": HOLD_MIN},
+                     "hold_days": HOLD_DAYS, "hold_min": HOLD_MIN,
+                     "cm_lag": CM_LAG_FACTOR, "cm_follow": CM_FOLLOW, "cm_guide": bool(guide)},
         "cmlog": cmlog, "cmweek": cm_week,
         "rl_avg": rl_avg, "res": res,
         "log": [e for e in log if e["d"] >= (tday - dt.timedelta(days=LOG_SHOW_DAYS)).isoformat()], "week": week, "cand": cand, "hype": hype, "ytl": ytl, "yt_info": yt_info,
