@@ -38,6 +38,7 @@ jobs:
             git show origin/daten:spikelog.json > store/spikelog.json || rm -f store/spikelog.json
             git show origin/daten:yt.json > store/yt.json || rm -f store/yt.json
             git show origin/daten:cmlog.json > store/cmlog.json || rm -f store/cmlog.json
+            git show origin/daten:weekly.json.gz > store/weekly.json.gz || rm -f store/weekly.json.gz
           fi
 
       - name: Daten auswerten

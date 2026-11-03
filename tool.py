@@ -59,6 +59,16 @@ CM_US_FLAT = 0.03               # US gilt als "ruhig" bis +3 %
 CM_HOLD = 0.90                  # Spike hält, wenn der CM-Preis am Folgetag noch mind. 90 % hat
 CM_LOG_DAYS = 30                # CM-Spike-Verlauf: 30 Tage
 CM_WEEK_MAX = 300               # 7-Tage-Ansicht: höchstens so viele Karten
+# Dauerläufer: Karten, deren Cardmarket-Preis über ~90 Tage stetig steigt (Daten: MTGJSON, CM-Trend + TCGplayer)
+DL_MIN_EUR = 5.0                # Cardmarket-Preis heute mind. 5 EUR (feiner filtern auf der Webseite)
+DL_MIN_CHANGE = 0.20            # CM heute mind. +20 % gegenüber vor 90 Tagen
+DL_MAX_DROP = 0.15              # zwischendurch nie mehr als 15 % unter dem bisherigen Höchststand
+DL_MAX_JUMP = 0.50              # kein einzelner Tagessprung, der mehr als die Hälfte des Anstiegs ausmacht
+DL_US_UP = 0.10                 # Ampel grün: US im gleichen Zeitraum mind. +10 %
+DL_US_DOWN = -0.10              # Ampel rot: US im gleichen Zeitraum -10 % oder schlechter
+WEEKLY_MIN = 5.0                # Wochen-Schnappschuss: Karten mit einem Preis ab 5 (USD oder EUR)
+WEEKLY_KEEP_DAYS = 800          # Wochen-Schnappschüsse gut 2 Jahre aufheben
+MJ = "https://mtgjson.com/api/v5/"
 STORE = "store"                 # wird im Branch "daten" aufbewahrt
 SITE = "site"                   # wird als Webseite veröffentlicht
 UA = {"User-Agent": "MTGSpikeTool/2.0", "Accept": "application/json"}
@@ -175,6 +185,81 @@ def cm_sales(g, foil, has_foil_us):
     sfx = "-foil" if foil else ""
     vals = [num(g.get(k + sfx)) for k in ("avg1", "avg7", "avg30")]
     return vals if any(vals) else None
+
+
+def mj_series(cards, today):
+    """MTGJSON-Preise der letzten ~90 Tage, nur für Dauerläufer: {scryfall_id: {"c","cf","u","uf": {datum: preis}}}
+    c/cf = Cardmarket-Trend (EUR) normal/Foil, u/uf = TCGplayer (USD). Fehler -> {} (Tab bleibt dann leer)."""
+    import csv, io, lzma
+    if os.environ.get("MJ_FILE"):   # nur zum Testen: fertige Datei statt Download
+        rows = load(os.environ["MJ_FILE"], {})
+        return {sid: row for sid, row in rows.items() if sid in cards
+                and any(steady_riser(row[k], today) for k in ("c", "cf") if k in row)}
+    try:
+        r = requests.get(MJ + "csv/cardIdentifiers.csv.gz", headers=UA, timeout=300)
+        r.raise_for_status()
+        raw = r.content
+        if raw[:2] == b"\x1f\x8b":
+            raw = gzip.decompress(raw)
+        ids = {}
+        for row in csv.DictReader(io.StringIO(raw.decode("utf-8"))):
+            if row.get("scryfallId") in cards:
+                ids[row["uuid"]] = row["scryfallId"]
+        out, n = {}, 0
+        with requests.get(MJ + "AllPrices.json.xz", headers=UA, stream=True, timeout=900) as r:
+            r.raise_for_status()
+            r.raw.decode_content = True
+            for uuid, v in ijson.kvitems(lzma.open(r.raw), "data", use_float=True):
+                sid = ids.get(uuid)
+                if not sid:
+                    continue
+                paper = v.get("paper") or {}
+                cm = (paper.get("cardmarket") or {}).get("retail") or {}
+                tc = (paper.get("tcgplayer") or {}).get("retail") or {}
+                row = {k: {d: round(p, 2) for d, p in s.items() if p}
+                       for k, s in (("c", cm.get("normal")), ("cf", cm.get("foil")),
+                                    ("u", tc.get("normal")), ("uf", tc.get("foil"))) if s}
+                n += 1
+                if any(steady_riser(row[k], today) for k in ("c", "cf") if k in row):
+                    out[sid] = row   # nur Treffer aufheben (sonst zu viel Speicher)
+        print(f"MTGJSON: {n} Karten mit Preisverlauf, {len(out)} Dauerläufer-Karten")
+        return out
+    except Exception as ex:
+        print("MTGJSON nicht geladen (Dauerläufer übersprungen):", ex)
+        return {}
+
+
+def value_at(series, day):
+    """Letzter Preis an oder vor dem Datum 'day' (oder None)."""
+    ks = [d for d in series if d <= day]
+    return series[max(ks)] if ks else None
+
+
+def steady_riser(series, today):
+    """Prüft, ob ein Preis über ~90 Tage stetig steigt. Ergebnis: dict mit Werten oder None."""
+    t = dt.date.fromisoformat(today)
+    day = lambda n: (t - dt.timedelta(days=n)).isoformat()
+    ds = sorted(d for d in series if d >= day(90))
+    if not ds or ds[0] > day(85) or ds[-1] < day(3):   # zu wenig Verlauf oder veraltet
+        return None
+    p0, p90 = series[ds[-1]], series[ds[0]]
+    p60, p30 = value_at(series, day(60)), value_at(series, day(30))
+    if not (p0 and p90 and p60 and p30) or p0 < DL_MIN_EUR:
+        return None
+    ch = p0 / p90 - 1
+    if ch < DL_MIN_CHANGE or not (p90 < p60 < p30 < p0):
+        return None
+    vals = [series[d] for d in ds]
+    peak, drop = vals[0], 0.0
+    for v in vals:
+        peak = max(peak, v)
+        drop = min(drop, v / peak - 1)
+    jump = max((b - a for a, b in zip(vals, vals[1:])), default=0)
+    if drop < -DL_MAX_DROP or jump > DL_MAX_JUMP * (p0 - p90):
+        return None
+    weeks = [value_at(series, day(n)) for n in range(91, -1, -7)]   # Wochenwerte für die kleine Kurve
+    return {"p90": p90, "p60": p60, "p30": p30, "p0": p0, "ch": round(ch, 3), "dd": round(drop, 3),
+            "w": [w for w in weeks if w]}
 
 
 def cm_link(url):
@@ -735,6 +820,50 @@ def main():
         cm_week.sort(key=lambda e: -e["ch"])
     print(f"CM-Spikes heute: {len(cm_today)}, 7 Tage: {len(cm_week)}, Verlauf: {len(cmlog)}")
 
+    # ---------------- Dauerläufer: CM-Preis steigt stetig über ~90 Tage ----------------
+    dl = []
+    mj = mj_series(cards, today)
+    for cid, row in mj.items():
+        c = cards[cid]
+        for foil, ck, uk in ((False, "c", "u"), (True, "cf", "uf")):
+            r = steady_riser(row.get(ck) or {}, today)
+            if not r:
+                continue
+            u = row.get(uk) or {}
+            u0 = u[max(u)] if u else None
+            u_ds = [d for d in u if d >= (tday - dt.timedelta(days=90)).isoformat()]
+            u90 = u[min(u_ds)] if u_ds else None   # erster US-Preis im 90-Tage-Zeitraum
+            uch = pct(u0, u90)
+            light = "y" if uch is None else "g" if uch >= DL_US_UP else "r" if uch <= DL_US_DOWN else "y"
+            e = {k: c.get(k) for k in ("n", "s", "r", "o", "sf", "rl", "ed", "img", "rd", "cm")}
+            e.update(r)
+            e.update({"id": cid, "f": foil, "eur": r["p0"], "u0": u0, "u90": u90, "uch": uch, "l": light,
+                      "rk": snap[cid][4] if cid in snap else None})
+            sales = cm_sales(guide.get(c.get("cmid")), foil, True)
+            if sales:
+                e["cs"] = sales
+            dl.append(e)
+    dl.sort(key=lambda e: -e["ch"])
+    print(f"Dauerläufer: {len(dl)}")
+
+    # Wochen-Schnappschuss für den Langzeit-Verlauf: {"d": [Daten], "p": {id: [[usd, usd_foil, eur, eur_foil] je Datum]}}
+    wk = load(f"{STORE}/weekly.json.gz", {"d": [], "p": {}})
+    if not wk["d"] or (tday - dt.date.fromisoformat(wk["d"][-1])).days >= 7:
+        wk["d"].append(today)
+        n = len(wk["d"])
+        for cid, s in snap.items():
+            if max(x or 0 for x in s[:4]) >= WEEKLY_MIN:
+                wk["p"].setdefault(cid, [])
+        for cid, lst in wk["p"].items():
+            lst.extend([None] * (n - 1 - len(lst)))   # fehlende Wochen auffüllen
+            lst.append(snap[cid][:4] if cid in snap else None)
+        keep = sum(1 for d in wk["d"] if (tday - dt.date.fromisoformat(d)).days > WEEKLY_KEEP_DAYS)
+        if keep:
+            wk["d"] = wk["d"][keep:]
+            wk["p"] = {k: v[keep:] for k, v in wk["p"].items() if any(v[keep:])}
+        print(f"Wochen-Schnappschuss gespeichert ({len(wk['d'])} Wochen, {len(wk['p'])} Karten)")
+    save(f"{STORE}/weekly.json.gz", wk, gz=True)
+
     # Preise für Watchlist
     prices = {}
     for cid, s in snap.items():
@@ -754,6 +883,10 @@ def main():
     save(f"{STORE}/spikelog.json", log)
     save(f"{STORE}/cmlog.json", cmlog)
     save(f"{SITE}/prices.json", prices)
+    save(f"{SITE}/dl.json", {"ok": bool(mj), "n": len(dl), "items": dl,
+                             "settings": {"min_eur": DL_MIN_EUR, "min_change": DL_MIN_CHANGE, "max_drop": DL_MAX_DROP,
+                                          "max_jump": DL_MAX_JUMP, "us_up": DL_US_UP, "us_down": DL_US_DOWN},
+                             "weeks": len(wk["d"]), "week_from": wk["d"][0] if wk["d"] else None})
     save(f"{SITE}/data.json", {
         "updated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="minutes"),
         "today": today, "base1": d1, "base7": d7, "days": len(hist), "fx": fx,
