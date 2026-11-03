@@ -262,6 +262,11 @@ def steady_riser(series, today):
             "w": [w for w in weeks if w]}
 
 
+def no_sales(g, foil):
+    """True, wenn die Karte im CM-Preis-Führer steht, aber in den letzten 7 Tagen keinen Verkauf hatte."""
+    return bool(g) and not num(g.get("avg7-foil" if foil else "avg7"))
+
+
 def cm_link(url):
     """Cardmarket-Link mit Filter: Englisch, Zustand ab Excellent."""
     if not url:
@@ -532,6 +537,8 @@ def main():
                   "tg": target, "bp": buy, "sh": ship})
         if ytn:
             e["yt"] = ytn
+        if no_sales(guide.get(cards[cid].get("cmid")), foil):
+            e["ns"] = 1       # kaum gehandelt: keine CM-Verkäufe in 7 Tagen
         if sales:
             e["cs"] = sales   # CM-Verkäufe Ø [gestern, 7 Tage, 30 Tage]
             if sales[1] and sales[2] and sales[1] >= sales[2] * (1 + CM_FOLLOW):
@@ -768,6 +775,8 @@ def main():
             e["yt"] = ytn
         if c["rl"] and light == "r":
             e["bo"] = 1   # RL-Karte springt nur auf Cardmarket -> möglicher Buyout
+        if no_sales(guide.get(c.get("cmid")), foil):
+            e["ns"] = 1   # kaum gehandelt
         return e
 
     def cm_spikes(new_snap, old_snap):
@@ -842,6 +851,8 @@ def main():
             sales = cm_sales(guide.get(c.get("cmid")), foil, True)
             if sales:
                 e["cs"] = sales
+            if no_sales(guide.get(c.get("cmid")), foil):
+                e["ns"] = 1
             dl.append(e)
     dl.sort(key=lambda e: -e["ch"])
     print(f"Dauerläufer: {len(dl)}")
