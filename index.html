@@ -239,6 +239,8 @@ function maxRow(tgt, eurNow, label) {
     <div class="row meta">${hints.join(" · ")}</div>`;
 }
 function newsLink(name) { return "https://www.google.com/search?tbm=nws&q=" + encodeURIComponent('"' + name + '" mtg'); }
+// MTGStocks: DuckDuckGo "\\"-Suche öffnet direkt den ersten Treffer auf mtgstocks.com (Name + Set)
+function stocksLink(name, set) { return "https://duckduckgo.com/?q=" + encodeURIComponent("\\site:mtgstocks.com/prints " + name.split(" // ")[0] + (set ? " " + set : "")); }
 function ytLink(name) { return "https://www.youtube.com/results?search_query=" + encodeURIComponent('"' + name.split(" // ")[0] + '" mtg'); }
 function redditLink(name) { return "https://www.reddit.com/r/mtgfinance/search/?q=" + encodeURIComponent(name); }
 
@@ -279,6 +281,7 @@ function cardHTML(e, opt = {}) {
         <a href="${esc(cmSearch(e.n))}" target="_blank" rel="noopener">Cardmarket</a>
         <a href="${esc(e.sf)}" target="_blank" rel="noopener">Scryfall</a>
         ${e.ed ? `<a href="${esc(e.ed)}" target="_blank" rel="noopener">EDHREC</a>` : ""}
+        <a href="${esc(stocksLink(e.n, e.s))}" target="_blank" rel="noopener">MTGStocks</a>
         <a href="${newsLink(e.n)}" target="_blank" rel="noopener">Warum? (News)</a>
         <a href="${redditLink(e.n)}" target="_blank" rel="noopener">Reddit</a>
         <a href="${ytLink(e.n)}" target="_blank" rel="noopener">YouTube</a>
@@ -398,6 +401,7 @@ async function renderWatch() {
       <div class="row meta">Beim Markieren: US ${usd(w.usd)}${w.usd && now ? " → jetzt " + pc((now - w.usd) / w.usd) : ""}</div>` : `<div class="row meta">Keine aktuellen Preise.</div>`}
       <div class="links"><a href="${cmSearch(w.n)}" target="_blank" rel="noopener">Cardmarket</a>
       <a href="https://scryfall.com/search?q=${encodeURIComponent('!"' + w.n + '"')}" target="_blank" rel="noopener">Scryfall</a>
+      <a href="${esc(stocksLink(w.n, w.s))}" target="_blank" rel="noopener">MTGStocks</a>
       <a href="${newsLink(w.n)}" target="_blank" rel="noopener">News</a></div>
     </div></div>`;
   }).join("");
