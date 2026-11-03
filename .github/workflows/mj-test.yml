@@ -1,0 +1,30 @@
+name: MJ Test
+
+on:
+  push:
+    branches: [mj-test]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests ijson
+      - run: mkdir -p out && (python mj_test.py > out/log.txt 2>&1 || echo FEHLER >> out/log.txt)
+      - name: Ergebnis sichern
+        if: always()
+        run: |
+          mkdir -p out
+          cd out
+          git init -q -b mj-ergebnis
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Ergebnis" || true
+          git push -q --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" mj-ergebnis
