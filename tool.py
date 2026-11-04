@@ -61,7 +61,7 @@ CM_LOG_DAYS = 30                # CM-Spike-Verlauf: 30 Tage
 CM_WEEK_MAX = 300               # 7-Tage-Ansicht: höchstens so viele Karten
 # Dauerläufer: Karten, deren Cardmarket-Preis über ~90 Tage stetig steigt (Daten: MTGJSON, CM-Trend + TCGplayer)
 DL_MIN_EUR = 5.0                # Cardmarket-Preis heute mind. 5 EUR (feiner filtern auf der Webseite)
-DL_MIN_CHANGE = 0.20            # CM heute mind. +20 % gegenüber vor 90 Tagen
+DL_MIN_CHANGE = 0.10            # CM heute mind. +10 % gegenüber vor 90 Tagen (feiner filtern auf der Webseite)
 DL_MAX_DROP = 0.15              # zwischendurch nie mehr als 15 % unter dem bisherigen Höchststand
 DL_MAX_JUMP = 0.50              # kein einzelner Tagessprung, der mehr als die Hälfte des Anstiegs ausmacht
 DL_US_UP = 0.10                 # Ampel grün: US im gleichen Zeitraum mind. +10 %

@@ -117,7 +117,7 @@ let D = null, PRICES = null, tab = "spikes", spikeView = "log", hypeView = "edh"
 let stF = store.get("stF", "all"), rlF = store.get("rlF", "all"), rarF = store.get("rarF", "all"), foilF = store.get("foilF", "all");
 let sortM = store.get("sortM", "std"), sortD = store.get("sortD", -1);   // sortD: -1 = absteigend, 1 = aufsteigend
 let q = "", pMin = store.get("pMin", null), pMax = store.get("pMax", null), fOpen = store.get("fOpen", false);
-let yMin = store.get("yMin", null), yMax = store.get("yMax", null), chMin = store.get("chMin", null), hideOwn = store.get("hideOwn", false);
+let yMin = store.get("yMin", null), yMax = store.get("yMax", null), chMin = store.get("chMin", null), chMax = store.get("chMax", null), hideOwn = store.get("hideOwn", false);
 const CH_FLOOR = 10;   // Mindest-Anstieg ist ab 10 % einstellbar
 // Haupt-Anstieg eines Eintrags: Hype = Rang-Verbesserung, sonst der Preis-Anstieg des Tabs (US, CM oder CM 90 Tage)
 const gainOf = e => "rk_old" in e ? e.att : e.ch;
@@ -139,7 +139,7 @@ function match(e) {
     && (!q || String(e.n || "").toLowerCase().includes(q))
     && (pMin == null || (pr != null && pr >= pMin)) && (pMax == null || (pr != null && pr <= pMax))
     && (yMin == null || (yearOf(e) != null && yearOf(e) >= yMin)) && (yMax == null || (yearOf(e) != null && yearOf(e) <= yMax))
-    && (chMin == null || (gainOf(e) != null && gainOf(e) >= chMin / 100))
+    && (chMin == null || (gainOf(e) != null && gainOf(e) >= chMin / 100)) && (chMax == null || (gainOf(e) != null && gainOf(e) <= chMax / 100))
     && (!hideOwn || !isOwn(e));
 }
 // Filtern + Sortieren. o.grouped = nach Tagen gruppierte Liste (Sortierung nur innerhalb eines Tages), o.cm = ohne Gewinn
@@ -180,7 +180,7 @@ function hitsNote() {
 }
 function filterBar(cm) {
   const b = (k, v, cur, label) => `<button data-${k}="${v}" class="${cur === v ? "on" : ""}">${label}</button>`;
-  const n = [stF !== "all", rlF !== "all", rarF !== "all", foilF !== "all", pMin != null || pMax != null, yMin != null || yMax != null, chMin != null, hideOwn].filter(Boolean).length;
+  const n = [stF !== "all", rlF !== "all", rarF !== "all", foilF !== "all", pMin != null || pMax != null, yMin != null || yMax != null, chMin != null || chMax != null, hideOwn].filter(Boolean).length;
   const pv = v => v != null ? String(v).replace(".", ",") : "";
   return `<div class="tools"><input id="q" type="search" enterkeyhint="search" autocomplete="off" placeholder="🔍 Karte suchen (alle Tabs)" value="${esc(q)}"></div>` + hitsNote() + sortBar(cm) +
     `<details class="flt"${fOpen ? " open" : ""}><summary>Filter${n ? ` (${n} aktiv)` : ""}</summary>
@@ -190,7 +190,7 @@ function filterBar(cm) {
     <div class="seg f"><span>Foil:</span>${b("foilf", "all", foilF, "Alle")}${b("foilf", "nonfoil", foilF, "Non-Foil")}${b("foilf", "foil", foilF, "Nur Foil")}</div>
     <div class="seg f pr"><span>Preis Cardmarket €:</span><input id="pmin" inputmode="decimal" placeholder="von" value="${pv(pMin)}"><input id="pmax" inputmode="decimal" placeholder="bis" value="${pv(pMax)}">${pMin != null || pMax != null ? `<button data-pclear="1">✕</button>` : ""}</div>
     <div class="seg f pr"><span>Release-Jahr:</span><input id="ymin" inputmode="numeric" placeholder="von" value="${yMin ?? ""}"><input id="ymax" inputmode="numeric" placeholder="bis" value="${yMax ?? ""}">${yMin != null || yMax != null ? `<button data-yclear="1">✕</button>` : ""}</div>
-    <div class="seg f pr"><span>Anstieg ab %:</span><input id="chmin" inputmode="numeric" placeholder="z. B. 30" value="${chMin ?? ""}">${chMin != null ? `<button data-chclear="1">✕</button>` : ""}<span>(ab ${CH_FLOOR} %)</span></div>
+    <div class="seg f pr"><span>Anstieg %:</span><input id="chmin" inputmode="numeric" placeholder="von" value="${chMin ?? ""}"><input id="chmax" inputmode="numeric" placeholder="bis" value="${chMax ?? ""}">${chMin != null || chMax != null ? `<button data-chclear="1">✕</button>` : ""}<span>(ab ${CH_FLOOR} %)</span></div>
     <div class="seg f"><span>Watchlist & Gekaufte:</span>${b("own", "0", hideOwn ? "1" : "0", "Anzeigen")}${b("own", "1", hideOwn ? "1" : "0", "Ausblenden")}</div></details>`;
 }
 // Mehrfach-Signale: in wie vielen Quellen taucht eine Karte (alle Druckversionen) in den letzten 7 Tagen auf?
@@ -538,7 +538,7 @@ document.addEventListener("click", ev => {
     store.set("sortM", sortM); store.set("sortD", sortD); render(); return;
   }
   if (t.dataset.yclear) { yMin = yMax = null; store.set("yMin", null); store.set("yMax", null); render(); return; }
-  if (t.dataset.chclear) { chMin = null; store.set("chMin", null); render(); return; }
+  if (t.dataset.chclear) { chMin = chMax = null; store.set("chMin", null); store.set("chMax", null); render(); return; }
   if (t.dataset.own) { hideOwn = t.dataset.own === "1"; store.set("hideOwn", hideOwn); render(); return; }
   if (t.dataset.pclear) { pMin = pMax = null; store.set("pMin", null); store.set("pMax", null); render(); return; }
   if (t.dataset.rarf) { rarF = t.dataset.rarf; store.set("rarF", rarF); render(); return; }
@@ -578,7 +578,7 @@ document.addEventListener("input", ev => {
 });
 
 document.addEventListener("keydown", ev => {   // Enter / Such-Taste am Handy: Feld verlassen -> Suche anwenden
-  if (ev.key === "Enter" && ["q", "pmin", "pmax", "ymin", "ymax", "chmin"].includes(ev.target.id)) ev.target.blur();
+  if (ev.key === "Enter" && ["q", "pmin", "pmax", "ymin", "ymax", "chmin", "chmax"].includes(ev.target.id)) ev.target.blur();
 });
 document.addEventListener("input", ev => {
   if (ev.target.id === "q" && !ev.target.value && q) { q = ""; render(); }
@@ -596,10 +596,11 @@ document.addEventListener("change", ev => {
     const y = v => { const n = num(v); return n == null ? null : Math.round(n); };
     yMin = y($("#ymin").value); yMax = y($("#ymax").value);
     store.set("yMin", yMin); store.set("yMax", yMax); render();
-  } else if (el.id === "chmin") {
-    const v = num(el.value);
-    chMin = v == null ? null : Math.max(CH_FLOOR, Math.round(v));
-    store.set("chMin", chMin); render();
+  } else if (el.id === "chmin" || el.id === "chmax") {
+    const a = num($("#chmin").value), b = num($("#chmax").value);
+    chMin = a == null ? null : Math.max(CH_FLOOR, Math.round(a));
+    chMax = b == null ? null : Math.max(CH_FLOOR, Math.round(b));
+    store.set("chMin", chMin); store.set("chMax", chMax); render();
   }
 });
 
