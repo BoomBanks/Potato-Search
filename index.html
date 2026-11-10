@@ -76,6 +76,7 @@ details.flt{margin:4px 0}
 details.flt summary{color:var(--fg);padding:4px 0}
 .sig{background:var(--acc);color:#fff}
 .own{background:#e7a600;color:#1b1b1d}
+.dlr{font-size:11.5px}.dlr td{padding:5px 3px}.dlr td:first-child{white-space:normal}.dlr td:not(:first-child){white-space:nowrap;text-align:right}
 .kg{background:var(--y);color:#1b1b1d}
 .spark{display:block;margin-top:4px}
 .spark polyline{fill:none;stroke:var(--g);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
@@ -336,6 +337,20 @@ function spark(w) {
   return `<svg class="spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-label="Verlauf 90 Tage"><polyline points="${pts}"/></svg>`;
 }
 
+// Dauerläufer-Bilanz: Was ist aus den gemerkten Dauerläufern nach 30/60/90 Tagen geworden?
+function dlResult() {
+  if (!DL || DL.logged == null) return "";
+  const r = DL.res || {}, mk = Math.round((DL.markup ?? 0.15) * 100), fee = Math.round((DL.fee ?? 0.05) * 100);
+  const first = DL.log_from ? new Date(DL.log_from + "T12:00") : null;
+  const due = first ? new Date(first.getTime() + 30 * 864e5).toLocaleDateString("de-AT") : "–";
+  const tables = [30, 60, 90].filter(n => (r[n] || []).length).map(n => `<b>Nach ${n} Tagen</b><table class="res dlr">
+    <tr><td></td><td>n</td><td>CM</td><td>↑</td><td>Gewinn</td><td>✓</td></tr>
+    ${r[n].map(x => `<tr><td>${esc(x.g)}</td><td>${x.n}</td><td>${pc(x.ch)}</td><td>${Math.round(x.up * 100)} %</td><td><b class="${x.pm > 0 ? "up" : "down"}">${eur(x.pm)}</b></td><td>${Math.round(x.win * 100)} %</td></tr>`).join("")}</table>`).join("<br>");
+  return `<details class="note"><summary>📊 Bilanz: Lohnt sich das?</summary>Das Tool merkt sich jede Karte am ersten Tag, an dem sie Dauerläufer ist (bisher ${DL.logged.toLocaleString("de-DE")} Karten seit ${first ? first.toLocaleDateString("de-AT") : "–"}), und prüft nach 30, 60 und 90 Tagen, was daraus geworden ist.<br>
+    <b>Gewinn</b> = Verkauf zum Ø der CM-Verkäufe der letzten 7 Tage (sonst Trend) − ${fee} % Gebühr − Versand beim Einkauf − Einkauf (CM-Preis am Merk-Tag + ${mk} %). Pro Karte, ohne geteilten Versand.<br>
+    ${tables ? `<span class="meta">n = Karten · CM = Preis-Änderung (Median) · ↑ = Anteil gestiegen · Gewinn = netto pro Karte (Median) · ✓ = Anteil mit Gewinn</span><br>` + tables : `<i>Erste Ergebnisse ab ca. ${due}.</i>`}</details>`;
+}
+
 async function renderDL() {
   if (!DL) { try { DL = await (await fetch("dl.json?" + Date.now())).json(); } catch { DL = {ok: false, items: []}; } }
   const s = DL.settings || {};
@@ -348,6 +363,7 @@ async function renderDL() {
     Die Ampel zeigt nur den US-Preis zum Vergleich: <span class="dot l-g"></span>US steigt auch · <span class="dot l-y"></span>US ruhig / kein Preis · <span class="dot l-r"></span>US fällt.<br>
     Daten: MTGJSON (Cardmarket-Trend und TCGplayer, letzte 90 Tage). Zusätzlich speichert das Tool jede Woche einen eigenen Schnappschuss${DL.weeks ? ` (bisher ${DL.weeks} Woche${DL.weeks > 1 ? "n" : ""})` : ""} – damit gibt es später auch 6 Monate und 1 Jahr.<br>
     Achtung: Im November/Dezember geben Preise oft etwas nach. Bei Foils mit wenigen Angeboten kann der Trend auch durch wenige Verkäufe steigen – Angebote prüfen.</details>`
+    + dlResult()
     + (DL.ok === false ? `<div class="empty">Dauerläufer kommen mit dem nächsten täglichen Update.</div>` : list(items, {dl: true, cm: true, buy: true, empty: "Keine Karten mit diesen Filtern."}));
 }
 

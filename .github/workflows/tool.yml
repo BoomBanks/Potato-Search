@@ -39,6 +39,7 @@ jobs:
             git show origin/daten:yt.json > store/yt.json || rm -f store/yt.json
             git show origin/daten:cmlog.json > store/cmlog.json || rm -f store/cmlog.json
             git show origin/daten:weekly.json.gz > store/weekly.json.gz || rm -f store/weekly.json.gz
+            git show origin/daten:dllog.json > store/dllog.json || rm -f store/dllog.json
           fi
 
       - name: Daten auswerten

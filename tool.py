@@ -66,6 +66,8 @@ DL_MAX_DROP = 0.15              # zwischendurch nie mehr als 15 % unter dem bish
 DL_MAX_JUMP = 0.50              # kein einzelner Tagessprung, der mehr als die Hälfte des Anstiegs ausmacht
 DL_US_UP = 0.10                 # Ampel grün: US im gleichen Zeitraum mind. +10 %
 DL_US_DOWN = -0.10              # Ampel rot: US im gleichen Zeitraum -10 % oder schlechter
+DL_OUTCOME_DAYS = (30, 60, 90)  # Dauerläufer-Bilanz: Ergebnis nach 30/60/90 Tagen
+DL_LOG_KEEP = 200               # gemerkte Dauerläufer 200 Tage aufheben
 WEEKLY_MIN = 5.0                # Wochen-Schnappschuss: Karten mit einem Preis ab 5 (USD oder EUR)
 WEEKLY_KEEP_DAYS = 800          # Wochen-Schnappschüsse gut 2 Jahre aufheben
 MJ = "https://mtgjson.com/api/v5/"
@@ -857,6 +859,54 @@ def main():
     dl.sort(key=lambda e: -e["ch"])
     print(f"Dauerläufer: {len(dl)}")
 
+    # Dauerläufer-Bilanz: jede Karte am ersten Tag als Dauerläufer merken und nach 30/60/90 Tagen prüfen
+    dllog = load(f"{STORE}/dllog.json", [])
+    open_keys = {(x["id"], x["f"]) for x in dllog
+                 if (tday - dt.date.fromisoformat(x["d"])).days <= max(DL_OUTCOME_DAYS)}
+    for e in dl:
+        if (e["id"], e["f"]) not in open_keys:
+            dllog.append({"id": e["id"], "f": e["f"], "n": e["n"], "s": e["s"], "d": today, "p": e["p0"],
+                          "ch": e["ch"], "u": e["u0"], "uch": e["uch"], "rk": e["rk"],
+                          **({"ns": 1} if e.get("ns") else {})})
+    for x in dllog:
+        age = (tday - dt.date.fromisoformat(x["d"])).days
+        s = snap.get(x["id"])
+        for n in DL_OUTCOME_DAYS:
+            if age >= n and f"x{n}" not in x and s:
+                g = guide.get((cards.get(x["id"]) or {}).get("cmid"))
+                a7 = num(g.get("avg7-foil" if x["f"] else "avg7")) if g else None
+                x[f"x{n}"] = [s[3 if x["f"] else 2], a7]   # [CM-Trend, CM-Verkäufe Ø 7 Tage]
+    dllog = [x for x in dllog if (tday - dt.date.fromisoformat(x["d"])).days <= DL_LOG_KEEP]
+
+    def dl_result(x, n):
+        """Netto-Ergebnis: Kauf zum CM-Preis + Aufschlag + Versand, Verkauf zum Ø 7 Tage (sonst Trend) - Gebühr."""
+        r = x.get(f"x{n}")
+        if not r or not r[0] or not x.get("p"):
+            return None
+        buy = round(x["p"] * (1 + BUY_MARKUP), 2)
+        sell = r[1] or r[0]
+        return r[0] / x["p"] - 1, sell * (1 - CM_FEE) - ship_for(buy) - buy
+
+    groups = [("Alle", lambda x: True), ("Non-Foil", lambda x: not x["f"]), ("Foil", lambda x: x["f"]),
+              ("ruhig (+10–30 %)", lambda x: x["ch"] <= 0.30), ("stark (über +30 %)", lambda x: x["ch"] > 0.30),
+              ("US steigt mit", lambda x: (x.get("uch") or 0) >= DL_US_UP),
+              ("Staple", lambda x: x.get("rk") and x["rk"] <= STAPLE_RANK), ("kaum gehandelt", lambda x: x.get("ns")),
+              ("ab 20 €", lambda x: x["p"] >= 20)]
+    dl_res = {}
+    for n in DL_OUTCOME_DAYS:
+        rows = []
+        for label, cond in groups:
+            rs = [r for r in (dl_result(x, n) for x in dllog if cond(x)) if r]
+            if rs:
+                rows.append({"g": label, "n": len(rs), "ch": round(median([r[0] for r in rs]), 3),
+                             "up": round(sum(r[0] > 0 for r in rs) / len(rs), 3),
+                             "pm": round(median([r[1] for r in rs]), 2),
+                             "win": round(sum(r[1] > 0 for r in rs) / len(rs), 3)})
+        dl_res[n] = rows
+    pending = sum(1 for x in dllog if f"x{DL_OUTCOME_DAYS[0]}" not in x)
+    print(f"Dauerläufer-Bilanz: {len(dllog)} gemerkt, {pending} noch ohne {DL_OUTCOME_DAYS[0]}-Tage-Ergebnis")
+    save(f"{STORE}/dllog.json", dllog)
+
     # Wochen-Schnappschuss für den Langzeit-Verlauf: {"d": [Daten], "p": {id: [[usd, usd_foil, eur, eur_foil] je Datum]}}
     wk = load(f"{STORE}/weekly.json.gz", {"d": [], "p": {}})
     if not wk["d"] or (tday - dt.date.fromisoformat(wk["d"][-1])).days >= 7:
@@ -897,7 +947,9 @@ def main():
     save(f"{SITE}/dl.json", {"ok": bool(mj), "n": len(dl), "items": dl,
                              "settings": {"min_eur": DL_MIN_EUR, "min_change": DL_MIN_CHANGE, "max_drop": DL_MAX_DROP,
                                           "max_jump": DL_MAX_JUMP, "us_up": DL_US_UP, "us_down": DL_US_DOWN},
-                             "weeks": len(wk["d"]), "week_from": wk["d"][0] if wk["d"] else None})
+                             "weeks": len(wk["d"]), "week_from": wk["d"][0] if wk["d"] else None,
+                             "res": dl_res, "logged": len(dllog), "log_from": min((x["d"] for x in dllog), default=None),
+                             "markup": BUY_MARKUP, "fee": CM_FEE})
     save(f"{SITE}/data.json", {
         "updated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="minutes"),
         "today": today, "base1": d1, "base7": d7, "days": len(hist), "fx": fx,
